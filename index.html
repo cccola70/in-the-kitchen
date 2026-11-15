@@ -159,6 +159,8 @@ function shade(hex,k){const n=parseInt(hex.slice(1),16);const f=v=>Math.round(cl
 function mix(a,b,t){const x=parseInt(a.slice(1),16),y=parseInt(b.slice(1),16);const f=s=>Math.round(lerp(x>>s&255,y>>s&255,t));return`rgb(${f(16)},${f(8)},${f(0)})`;}
 function* sleep(d){while(d>0)d-=yield;}
 const panX=x=>clamp(x/W*1.3-.65,-1,1);
+let PRE=false,radioOn=true;           // PRE: a kitchen is being run ahead, silently, before it is shown.  radioOn: the music can be heard
+const noteHz=n=>{const m=/^([A-G])([#b]?)(-?\d)$/.exec(n);if(!m)return 220;const pc={C:0,D:2,E:4,F:5,G:7,A:9,B:11}[m[1]]+(m[2]==='#'?1:m[2]==='b'?-1:0);return 440*Math.pow(2,(pc-9)/12+(+m[3]-4));};
 
 /* ───────────────────────── 2. AUDIO ENGINE ─────────────────────────
    Everything except the music is built from raw Web Audio nodes on Tone's
@@ -167,7 +169,7 @@ const panX=x=>clamp(x/W*1.3-.65,-1,1);
 const A={ready:false,bus:{}};
 let ac=null;
 const BUSES=['music','bed','chop','pots','other','chatter'];
-const TRIM={music:1.73,bed:.49,chop:.21,pots:.29,other:.265,chatter:.23};
+const TRIM={music:1.73,bed:.38,chop:.55,pots:.75,other:.62,chatter:.5};
 const sliderGain=(v,bus)=>Math.pow(v/100,1.7)*1.6*(TRIM[bus]||1);
 
 function initAudio(ctx){
@@ -323,11 +325,29 @@ const SND={
     g.gain.setTargetAtTime(0,t,.06);nz(o,t0,t-t0,3200,{q:.8,g:.004,a:.1});
     osc.start(t0);vib.start(t0);osc.stop(t+.4);vib.stop(t+.4);
   },
+  /* humming along with the radio: a soft closed-mouth voice following notes from the tune that is playing */
+  hum(line,pan,deep){
+    const t0=now(),o=ev(pan,'chatter',R(.5,.7)),osc=ac.createOscillator(),vib=ac.createOscillator(),vd=ac.createGain(),g=ac.createGain(),lp=ac.createBiquadFilter(),bp=ac.createBiquadFilter(),bg=ac.createGain();
+    osc.type='triangle';vib.frequency.value=R(4.6,5.6);vd.gain.value=1.6;vib.connect(vd);vd.connect(osc.frequency);lp.type='lowpass';lp.frequency.value=780;lp.Q.value=.4;bp.type='bandpass';bp.frequency.value=270;bp.Q.value=2;bg.gain.value=.8;
+    g.gain.value=0;osc.connect(lp);lp.connect(g);osc.connect(bp);bp.connect(bg);bg.connect(g);g.connect(o);
+    let t=t0;const k=deep?.5:1;osc.frequency.setValueAtTime(line[0].f*k,t0);
+    for(const n of line){osc.frequency.setTargetAtTime(n.f*k,t,.035);g.gain.setTargetAtTime(.2,t,.05);g.gain.setTargetAtTime(.11,t+n.d*.6,.09);t+=n.d;}
+    g.gain.setTargetAtTime(0,t,.12);osc.start(t0);vib.start(t0);osc.stop(t+.7);vib.stop(t+.7);
+  },
+  /* close to the viewer: dry, soft, and a little fuller than the sounds from across the room */
+  cupUp(){const t=now(),o=ev(.06,'other',.8);nz(o,t,.09,1100,{q:1,g:.06,a:.03});},
+  cupDown(){const t=now(),o=ev(.06,'other',1);tn(o,t,.07,210,{g:.2,f2:150});nz(o,t,.05,520,{q:1.4,g:.16});ring(o,t,R(1500,1800),[1,2.4],.07,.035);},
+  plateNear(){const t=now(),o=ev(-.08,'other',1);ring(o,t,R(820,900),[1,2.38],.1,.07);nz(o,t,.06,240,{type:'lowpass',g:.18});},
+  pourNear(d=3){const t=now(),o=ev(.06,'other',1);nz(o,t,d,900,{type:'lowpass',g:.085,a:.15,f2:520});nz(o,t,d,2600,{q:1.2,g:.02,a:.2});
+    const n=Math.floor(d/.11);for(let i=0;i<n;i++){const tt=t+.12+i*.11+R(.03),k=i/n;tn(o,tt,.05,260+k*380+R(40),{g:.05,f2:440+k*560});}},
+  purr(pan){const t=ac.currentTime+.02,o=ev(pan,'other',1),os=ac.createOscillator(),lp=ac.createBiquadFilter(),v=ac.createGain();
+    os.type='sawtooth';os.frequency.value=R(24,27);lp.type='lowpass';lp.frequency.value=380;lp.Q.value=.5;v.gain.value=0;os.connect(lp);lp.connect(v);v.connect(o);
+    v.gain.setTargetAtTime(.1,t,.25);v.gain.setTargetAtTime(.03,t+1,.12);v.gain.setTargetAtTime(.13,t+1.3,.25);v.gain.setTargetAtTime(0,t+2.3,.15);os.start(t);os.stop(t+3);},
   torchOn(pan){if(A.torch)return;const t=ac.currentTime,o=ev(pan,'other',1);o.gain.setValueAtTime(0,t);o.gain.linearRampToValueAtTime(1,t+.1);
     A.torch={o,l:[noiseLoop(o,[['bandpass',4600,.6]],.11),noiseLoop(o,[['lowpass',420,.7]],.3)]};nz(A.torch.o,t,.05,3000,{type:'highpass',g:.1});},
   torchOff(){const T=A.torch;if(!T)return;A.torch=null;const t=ac.currentTime;T.o.gain.setTargetAtTime(0,t,.05);setTimeout(()=>T.l.forEach(l=>l.stop()),600);},
 };
-const SFX=new Proxy({},{get:(_,k)=>(...a)=>{if(A.ready&&SND[k]){SG=SGAIN[k]||1;try{SND[k](...a);}catch(e){console.warn(e);}SG=1;}}});
+const SFX=new Proxy({},{get:(_,k)=>(...a)=>{if(A.ready&&!PRE&&SND[k]){SG=SGAIN[k]||1;try{SND[k](...a);}catch(e){console.warn(e);}SG=1;}}});
 
 /* ── chatter: a muffled murmur of voices from across the room.
       No noise at all here (filtered noise with moving filters is what sounded like a jet).  Each voice is a
@@ -614,6 +634,7 @@ function drawTool(g,c,h,sg,s){
       g.fillStyle=j?'rgba(170,96,36,.92)':'rgba(62,36,24,.92)';g.beginPath();g.ellipse(30,8,j?15:21,j?17:20,0,0,TAU);g.fill();
       g.fillStyle='#1c1a1f';rr(g,14,-15,j?26:34,8,3);g.fill();g.beginPath();g.moveTo(40,-14);g.lineTo(54,-12);g.lineTo(42,-6);g.fill();break;}
     case'bknife':g.fillStyle='#2a2422';rr(g,-12,-4,24,8,3);g.fill();g.fillStyle='#cfd6dc';rr(g,12,-4,34,7,3);g.fill();break;
+    case'fork':g.strokeStyle='#b9c1c8';g.lineWidth=3.6;g.lineCap='round';ln(g,-10,0,44,0);g.lineWidth=2;for(let i=-1;i<=1;i++)ln(g,44,i*3.4,56,i*3.4);ln(g,44,-3.4,44,3.4);break;
     case'sticks':g.strokeStyle='#6b4630';g.lineWidth=3;g.lineCap='round';ln(g,-12,-3,62,-1);ln(g,-12,3,62,3);break;
   }
   g.restore();
@@ -795,60 +816,6 @@ function drawClock(g,x,y,w,o){
   bar(x+w-7-t*1.6,y+7+t*.8,t*.9,t*.9,pm);
   g.restore();
 }
-/* ───────────────────────── 4b. COMPANY ─────────────────────────
-   What makes the room feel like somewhere you belong: a place set for the viewer at the front counter,
-   a host who keeps the cup full and nods hello, cooks who drink from their own mugs and nod along to
-   the radio, and a few warm things on the shelves.  Shared by every kitchen. */
-const mkYou=o=>Object.assign({x:960,y:952,cup:.85,treat:3,max:3,hot:1,lift:0,ph:0,pt:0,sipT:R(16,28),biteT:R(30,60),st:0,busy:false,pour:null},o);
-/* the viewer's cup is picked up now and then (it slides out of frame toward the camera and comes back a little emptier) */
-function stepYou(Y,dt,puff){
-  Y.hot=Math.max(.25,Y.hot-dt/260);
-  if(Y.ph===0){if(!Y.busy&&(Y.sipT-=dt)<0&&Y.cup>.06){Y.ph=1;Y.pt=0;}}
-  else if(Y.ph===1){Y.pt+=dt;Y.lift=ease(Y.pt/.55);if(Y.pt>=.55){Y.ph=2;Y.pt=0;}}
-  else if(Y.ph===2){Y.pt+=dt;if(Y.pt>=1.7){Y.ph=3;Y.pt=0;Y.cup=Math.max(0,Y.cup-R(.09,.15));}}
-  else{Y.pt+=dt;Y.lift=1-ease(Y.pt/.55);if(Y.pt>=.55){Y.ph=0;Y.lift=0;Y.sipT=R(20,44);SFX.clink(0,.35);}}
-  if(!Y.busy&&(Y.biteT-=dt)<0&&Y.treat>0){Y.treat--;Y.biteT=R(50,95);}
-  Y.st+=dt*(Y.cup>.2&&Y.ph===0?1.3*Y.hot:0);while(Y.st>1){Y.st--;puff(Y.x+75,Y.y-84,{spread:8,r0:10,r1:20,a:.1,l0:1.6,l1:3});}
-}
-function drawYou(g,Y,t){
-  const x=Y.x,by=Y.y,Z=1.45;
-  g.save();g.translate(x,by);g.scale(Z,Z);g.translate(-x,-by);
-  g.fillStyle='rgba(0,0,0,.25)';rr(g,x-132,by-3,264,10,5);g.fill();g.fillStyle=Y.mat;rr(g,x-130,by-8,260,11,5);g.fill();   // place mat, seen nearly edge-on
-  /* small plate with something to eat */
-  const px=x-58;g.fillStyle='#f3eee2';ell(g,px,by-9,40,7.5);g.fill();g.fillStyle='#e1d9c8';ell(g,px,by-9,28,4.6);g.fill();
-  for(let i=0;i<Y.treat;i++){const tx=px-20+i*20,ty=by-14;
-    if(Y.treatKind==='gyoza'){g.fillStyle='#f0e2bf';g.beginPath();g.arc(tx,ty+3,11,Math.PI,0);g.fill();g.strokeStyle='#c9924a';g.lineWidth=2.5;g.beginPath();g.arc(tx,ty+3,10,Math.PI*1.08,Math.PI*1.92);g.stroke();}
-    else if(Y.treatKind==='pie'){g.fillStyle='#d9a052';g.beginPath();g.moveTo(tx-11,ty+4);g.lineTo(tx+11,ty+4);g.lineTo(tx+9,ty-9);g.lineTo(tx-9,ty-7);g.fill();g.fillStyle='#b5543c';g.fillRect(tx-9,ty-2,18,5);g.fillStyle='#f0d9a8';g.fillRect(tx-10,ty-9,20,4);}
-    else if(Y.treatKind==='bread'){g.fillStyle='#b98a4e';ell(g,tx,ty-1,10,8);g.fill();g.fillStyle='#f0e0b8';ell(g,tx,ty-1,7,5.4);g.fill();}
-    else{g.lineCap='round';g.strokeStyle='#b97a34';g.lineWidth=9;g.beginPath();g.arc(tx,ty+8,10,Math.PI*1.15,Math.PI*1.85);g.stroke();g.strokeStyle='#e0aa5a';g.lineWidth=5;g.beginPath();g.arc(tx,ty+7,10,Math.PI*1.2,Math.PI*1.8);g.stroke();}}
-  /* the cup */
-  const cx=x+52,cy=by-8+Y.lift*190,k=1+Y.lift*.25,w=(Y.cupKind==='demi'?34:Y.cupKind==='yunomi'?38:46)*k,h=(Y.cupKind==='demi'?26:Y.cupKind==='yunomi'?40:44)*k;
-  if(Y.cupKind==='demi'){g.fillStyle='#f3eee2';ell(g,cx,cy-1,w*.82,6*k);g.fill();}
-  g.fillStyle=Y.cupCol;
-  if(Y.cupKind==='yunomi'){g.beginPath();g.moveTo(cx-w/2,cy-h);g.lineTo(cx+w/2,cy-h);g.lineTo(cx+w*.4,cy);g.lineTo(cx-w*.4,cy);g.fill();g.fillStyle='rgba(255,255,255,.14)';g.fillRect(cx-w*.46,cy-h*.62,w*.92,5*k);}
-  else{rr(g,cx-w/2,cy-h,w,h,8*k);g.fill();g.strokeStyle=Y.cupCol;g.lineWidth=6*k;g.beginPath();g.arc(cx+w/2+2*k,cy-h*.5,h*.26,-1.25,1.25);g.stroke();
-    if(Y.band){g.fillStyle=Y.band;g.fillRect(cx-w/2,cy-h*.36,w,4*k);}}
-  g.fillStyle=shade(Y.cupCol,1.18);ell(g,cx,cy-h,w/2,6.5*k);g.fill();
-  g.fillStyle=shade(Y.cupCol,.7);ell(g,cx,cy-h+1,w/2-4*k,4.6*k);g.fill();
-  if(Y.cup>.03){const q=.45+.55*Y.cup;g.fillStyle=Y.liq;ell(g,cx,cy-h+1+(1-q)*3,(w/2-4*k)*q,4.6*k*q);g.fill();
-    if(Y.cupKind==='cocoa'&&Y.cup>.4){g.fillStyle='#fbf6ea';ell(g,cx-6,cy-h,4,2.4);g.fill();ell(g,cx+5,cy-h+1,3.6,2.2);g.fill();}}
-  g.restore();
-  if(Y.pour){const tx=x+52*Z,ty=by-(8+h)*Z;g.strokeStyle=Y.liq;g.lineWidth=5;g.lineCap='round';g.beginPath();g.moveTo(Y.pour[0],Y.pour[1]);g.quadraticCurveTo(Y.pour[0]+8,ty-30,tx,ty);g.stroke();}
-}
-/* ── the host: tops up the viewer's cup with a nod and a wave, and makes the rounds of the line ── */
-function* hostPour(c,E){
-  const Y=E.YOU;c.tool=E.pot;c.toolAng=c.toolAngT=-.15;c.carry={draw(){}};c.nT=[44,-246];c.fT=[10,-170];
-  yield*walkTo(c,Y.x-150,1,false,Y.frontY);
-  while(Y.ph!==0)yield;Y.busy=true;c.leanT=6;
-  if(Y.treat<=1){reachF(c,Y.x-84,Y.y-40);yield*sleep(.7);Y.treat=Y.max;SFX.tick(0);yield*sleep(.3);c.fT=[10,-170];}      // something fresh on the plate
-  reach(c,Y.x+10,Y.y-158);c.toolAngT=.05;yield*sleep(.7);
-  c.toolAngT=.85;yield*sleep(.25);SFX.pour(0);
-  while(Y.cup<1){const dt=yield;Y.cup=Math.min(1,Y.cup+dt/1.7);Y.hot=1;Y.pour=toolTip(c,56);}
-  Y.pour=null;c.toolAngT=-.05;yield*sleep(.35);c.nT=[44,-246];
-  c.leanT=11;c.lookY=6;yield*sleep(.5);c.leanT=2;c.lookY=0;                                                               // a nod...
-  c.fT=[34,-424];yield*sleep(.3);for(let i=0;i<3;i++){c.fT=[48,-428];yield*sleep(.17);c.fT=[24,-428];yield*sleep(.17);}  // ...and a wave
-  c.fT=[10,-170];c.leanT=0;Y.busy=false;yield*sleep(.4);
-}
 function* hostRounds(c,E){
   const Y=E.YOU,list=E.cooks.filter(k=>k.home&&!k.moving&&Math.abs(k.y-WORK_Y)<4).sort(()=>R()-.5).slice(0,RI(2,3)).sort((a,b)=>E.enter>960?b.x-a.x:a.x-b.x);
   for(const k of list){
@@ -865,16 +832,6 @@ function* hostRounds(c,E){
   if(R()<.6){yield*walkTo(c,Y.x-170,1,true);c.leanT=8;c.lookY=6;yield*sleep(.5);c.leanT=0;c.lookY=0;                    // a nod to the guest in passing
     c.nT=[40,-400];yield*sleep(.3);for(let i=0;i<2;i++){c.nO[0]=12;yield*sleep(.16);c.nO[0]=-6;yield*sleep(.16);}c.nO[0]=0;restArms(c);yield*sleep(.3);}
 }
-function* hostLife(c,E){
-  const Y=E.YOU,off=E.enter;let first=true;c.x=off;c.y=c.lane;yield*sleep(R(12,20));
-  for(;;){
-    c.x=off;c.y=c.lane;c.face=c.fa=off>960?-1:1;c.pose='side';restArms(c);
-    if(first||Y.cup<.5||Y.treat<=1){first=false;c.task={id:'top up the guest'};yield*hostPour(c,E);}
-    else{c.task={id:'make the rounds'};yield*hostRounds(c,E);}
-    yield*walkTo(c,off,off>960?1:-1,true);c.task=null;c.tool=null;c.carry=null;
-    yield*sleep(R(30,60));
-  }
-}
 /* ── things cooks do for themselves ── */
 function* sipMug(c){          // a drink from their own mug, kept under the counter
   const col=c.A.apron,mug=(g,h,s)=>{g.fillStyle=col;rr(g,h[0]-9*s,h[1]-14*s,20*s,22*s,5*s);g.fill();g.strokeStyle=col;g.lineWidth=3.5*s;g.beginPath();g.arc(h[0]+12*s,h[1]-3*s,6*s,-1.2,1.2);g.stroke();g.fillStyle='rgba(0,0,0,.3)';ell(g,h[0]+1*s,h[1]-13*s,8*s,2.2*s);g.fill();};
@@ -883,8 +840,17 @@ function* sipMug(c){          // a drink from their own mug, kept under the coun
   c.nT=[40,-250];c.look=R(-3,5);yield*sleep(R(.6,1.4));c.look=0;
   c.nT=[30,-190];c.leanT=8;yield*sleep(.45);c.hold=null;SFX.clink(panX(c.x),.3);c.leanT=0;
 }
-function* groove(c){          // nodding along to the radio for a few bars
-  const f=(Music.on&&Music.cfg?Music.cfg.bpm:76)/60*TAU;let t=0;const d=R(4,8);c.nT=[28,-214];c.fT=[18,-206];
+function humLine(){           // a few notes from the scale of the tune that is playing, ending on a note of the current chord
+  if(!Music.on||!Music.scale||!radioOn)return null;
+  const fit=f=>{while(f>330)f/=2;while(f<150)f*=2;return f;},sc=Music.scale.map(noteHz),beat=60/Music.cfg.bpm,out=[];let i=RI(2,6);
+  for(let k=0,n=RI(4,7);k<n;k++){i=clamp(i+pick([-2,-1,-1,1,1,2]),0,sc.length-1);out.push({f:fit(sc[i]),d:beat*pick([.5,.5,1,1,1.5])});}
+  if(Music.ch){const last=out[out.length-1],tones=Music.ch.n.map(n=>fit(noteHz(n)));last.f=tones.sort((a,b)=>Math.abs(a-last.f)-Math.abs(b-last.f))[0];}
+  out[out.length-1].d=beat*2;return out;
+}
+function* groove(c){          // nodding along to the radio for a few bars, sometimes humming the tune
+  const f=(Music.on&&Music.cfg?Music.cfg.bpm:76)/60*TAU;let t=0,d=R(4,8);c.nT=[28,-214];c.fT=[18,-206];
+  if(!radioOn){yield*sleep(1);return;}
+  if(R()<.6){const line=humLine();if(line){SFX.hum(line,panX(c.x),c.A.h>1);d=line.reduce((a,n)=>a+n.d,0)+.3;}}
   while(t<d){t+=yield;c.lookY=2.6*Math.sin(t*f);c.kick=.35*Math.max(0,Math.sin(t*f));c.nO[1]=1.5*Math.sin(t*f);}
   c.lookY=0;c.nO[1]=0;
 }
@@ -894,8 +860,8 @@ function drawRadio(g,x,y,t,o={}){         // x = centre, y = what it stands on
   g.strokeStyle='#9aa3ad';g.lineWidth=2;g.lineCap='round';ln(g,x+18,y-32,x+34,y-58);
   g.fillStyle=o.body||'#8a5a3c';rr(g,x-30,y-34,60,34,7);g.fill();
   g.fillStyle='rgba(0,0,0,.35)';ell(g,x-12,y-17,11,11);g.fill();g.fillStyle='rgba(255,255,255,.12)';for(let i=-1;i<=1;i++)g.fillRect(x-20,y-18+i*5,16,1.5);
-  const gl=.7+.3*Math.sin(t*2.1);g.fillStyle=`rgba(255,214,140,${gl})`;rr(g,x+4,y-27,20,9,3);g.fill();g.fillStyle='#2a2422';ell(g,x+14,y-10,4.5,4.5);g.fill();
-  for(let i=0;i<3;i++){const ph=(t*.36+i/3)%1,nx=x+2+i*9+Math.sin(ph*5+i*2)*9,ny=y-44-ph*62,a=Math.sin(Math.PI*ph)*.8;       // the tune drifting out of it
+  const gl=radioOn?.7+.3*Math.sin(t*2.1):.12;g.fillStyle=`rgba(255,214,140,${gl})`;rr(g,x+4,y-27,20,9,3);g.fill();g.fillStyle='#2a2422';ell(g,x+14,y-10,4.5,4.5);g.fill();
+  if(radioOn)for(let i=0;i<3;i++){const ph=(t*.36+i/3)%1,nx=x+2+i*9+Math.sin(ph*5+i*2)*9,ny=y-44-ph*62,a=Math.sin(Math.PI*ph)*.8;       // the tune drifting out of it
     g.globalAlpha=a;g.fillStyle=g.strokeStyle=o.note||'#ffe2b0';g.save();g.translate(nx,ny);g.rotate(-.35);ell(g,0,0,4.6,3.4);g.fill();g.restore();
     g.lineWidth=1.8;ln(g,nx+4,ny-1,nx+4,ny-14);if(i%2)ln(g,nx+4,ny-14,nx+10,ny-11);}
   g.globalAlpha=1;
@@ -928,6 +894,356 @@ function drawVase(g,x,y,t,cols=['#e59a9a','#f1d27a','#e9e0cf']){   // a few flow
   cols.forEach((c,i)=>{const a=(i-1)*.38+Math.sin(t*.7+i)*.035,L=30+i%2*8,ex=x+Math.sin(a)*L,ey=y-24-Math.cos(a)*L;
     g.strokeStyle='#5f8f4e';g.lineWidth=2.4;g.lineCap='round';ln(g,x+(i-1)*3,y-23,ex,ey);g.fillStyle=c;for(let k=0;k<5;k++){ell(g,ex+Math.cos(k*1.257)*5,ey+Math.sin(k*1.257)*5,4,4);g.fill();}g.fillStyle='#c98a3a';ell(g,ex,ey,3,3);g.fill();});
 }
+/* ───────────────────────── 4b. COMPANY ─────────────────────────
+   What makes the room feel like somewhere you belong: a place set for the viewer at the front counter
+   (a hand comes in for the cup and the plate), a host who keeps the cup full, cooks who look up and say
+   hello, bring a taste over, eat together every fifteen minutes with a bowl set out for the viewer too,
+   push through a rush and breathe out after it, hum along to the radio, and get visits from the front
+   of house, a delivery and a regular at the window.  Shared by every kitchen. */
+const mkYou=o=>Object.assign({x:960,y:952,cup:.85,treat:3,max:3,hot:1,lift:0,ph:0,pt:0,sipT:R(10,18),biteT:R(20,36),st:0,busy:false,pour:null,
+  hand:0,bh:0,bph:0,bpt:0,bowl:null,sleeve:'#8a7466',skin:'#d8a888'},o);
+function stepYou(Y,dt,puff){
+  Y.hot=Math.max(.25,Y.hot-dt/260);
+  /* a sip: the hand comes in, the cup goes out of frame toward the camera, and it comes back a little emptier */
+  if(Y.ph===0){if(!Y.busy&&Y.bph===0&&(Y.sipT-=dt)<0&&Y.cup>.12){Y.ph=1;Y.pt=0;}}
+  else{Y.pt+=dt;
+    if(Y.ph===1){Y.hand=ease(Y.pt/.5);if(Y.pt>=.5){Y.ph=2;Y.pt=0;SFX.cupUp();}}
+    else if(Y.ph===2){Y.lift=ease(Y.pt/.55);if(Y.pt>=.55){Y.ph=3;Y.pt=0;}}
+    else if(Y.ph===3){if(Y.pt>=1.7){Y.ph=4;Y.pt=0;Y.cup=Math.max(0,Y.cup-R(.1,.16));}}
+    else if(Y.ph===4){Y.lift=1-ease(Y.pt/.55);if(Y.pt>=.55){Y.ph=5;Y.pt=0;Y.lift=0;SFX.cupDown();}}
+    else{Y.hand=1-ease(Y.pt/.45);if(Y.pt>=.45){Y.ph=0;Y.hand=0;Y.sipT=R(20,42);}}}
+  /* a bite: the other hand reaches the plate (or the bowl at family meal) and a third of a piece is gone */
+  if(Y.bph===0){if(!Y.busy&&Y.ph===0&&(Y.biteT-=dt)<0&&(Y.bowl!=null?Y.bowl>.03:Y.treat>.01)){Y.bph=1;Y.bpt=0;}}
+  else{Y.bpt+=dt;
+    if(Y.bph===1){Y.bh=ease(Y.bpt/.5);if(Y.bpt>=.5){Y.bph=2;Y.bpt=0;
+      if(Y.bowl!=null)Y.bowl=Math.max(0,Y.bowl-R(.07,.1));else Y.treat=Math.max(0,Math.round((Y.treat-1/3)*3)/3);}}
+    else if(Y.bph===2){if(Y.bpt>=.25){Y.bph=3;Y.bpt=0;}}
+    else{Y.bh=1-ease(Y.bpt/.5);if(Y.bpt>=.5){Y.bph=0;Y.bh=0;Y.biteT=Y.bowl!=null?R(4,8):R(16,34);}}}
+  Y.st+=dt*(Y.cup>.2&&Y.ph===0?1.3*Y.hot:0);while(Y.st>1){Y.st--;puff(Y.x+75,Y.y-84,{spread:8,r0:10,r1:20,a:.1,l0:1.6,l1:3});}
+}
+function treatShape(g,kind,tx,ty){
+  if(kind==='gyoza'){g.fillStyle='#f0e2bf';g.beginPath();g.arc(tx,ty+3,11,Math.PI,0);g.fill();g.strokeStyle='#c9924a';g.lineWidth=2.5;g.beginPath();g.arc(tx,ty+3,10,Math.PI*1.08,Math.PI*1.92);g.stroke();}
+  else if(kind==='pie'){g.fillStyle='#d9a052';g.beginPath();g.moveTo(tx-11,ty+4);g.lineTo(tx+11,ty+4);g.lineTo(tx+9,ty-9);g.lineTo(tx-9,ty-7);g.fill();g.fillStyle='#b5543c';g.fillRect(tx-9,ty-2,18,5);g.fillStyle='#f0d9a8';g.fillRect(tx-10,ty-9,20,4);}
+  else if(kind==='bread'){g.fillStyle='#b98a4e';ell(g,tx,ty-1,10,8);g.fill();g.fillStyle='#f0e0b8';ell(g,tx,ty-1,7,5.4);g.fill();}
+  else{g.lineCap='round';g.strokeStyle='#b97a34';g.lineWidth=9;g.beginPath();g.arc(tx,ty+8,10,Math.PI*1.15,Math.PI*1.85);g.stroke();g.strokeStyle='#e0aa5a';g.lineWidth=5;g.beginPath();g.arc(tx,ty+7,10,Math.PI*1.2,Math.PI*1.8);g.stroke();}
+}
+/* what the crew (and the viewer) eat at family meal.  kind: ramen | plate | stew | bake */
+function foodShape(g,F,x,by,w,lvl){
+  if(F.kind==='ramen'||F.kind==='stew'){drawBowl(g,x,by,w,{col:F.col,rim:F.rim,band:F.band,broth:F.kind==='ramen'?lvl:0,noodles:F.kind==='ramen'&&lvl>.12,tops:F.kind==='ramen'?(lvl>.6?3:lvl>.3?1:0):0});
+    if(F.kind==='stew'&&lvl>.05){const ty=by-w*.46;g.save();ell(g,x,ty+1,w/2-4,w*.118-2.2);g.clip();g.fillStyle=F.food[0];ell(g,x,ty+3+(1-lvl)*8,w/2-5,w*.1);g.fill();
+      for(let i=0;i<5;i++){g.fillStyle=F.food[1+i%(F.food.length-1)];ell(g,x-w*.26+i*w*.13,ty+2+(1-lvl)*8+hash(i)*2,w*.05,w*.03);g.fill();}g.restore();}}
+  else{g.fillStyle='rgba(0,0,0,.18)';ell(g,x,by+1,w*.52,w*.09);g.fill();g.fillStyle=F.col;ell(g,x,by-2,w*.52,w*.1);g.fill();g.fillStyle=F.rim;ell(g,x,by-2,w*.36,w*.062);g.fill();
+    if(lvl>.05){const n=Math.ceil(lvl*F.food.length*2);for(let i=0;i<n;i++){g.fillStyle=F.food[i%F.food.length];ell(g,x-w*.24+(i%4)*w*.16,by-5-Math.floor(i/4)*w*.07,w*.11,w*.065);g.fill();}}}
+}
+function youHand(g,Y,hx,hy,ox,oy){     // a sleeved arm in from the bottom edge, seen from the viewer's own seat
+  g.lineCap='round';const ax=hx+(ox-hx)*.14,ay=hy+(oy-hy)*.14;
+  g.strokeStyle=Y.sleeve;g.lineWidth=36;g.beginPath();g.moveTo(ox,oy);g.lineTo(ax,ay);g.stroke();
+  g.strokeStyle=shade(Y.sleeve,1.16);g.lineWidth=38;g.beginPath();g.moveTo(ax+(ox-hx)*.05,ay+(oy-hy)*.05);g.lineTo(ax,ay);g.stroke();      // the cuff
+  g.fillStyle=Y.skin;g.save();g.translate(hx,hy);g.rotate(Math.atan2(hy-oy,hx-ox));g.beginPath();g.ellipse(2,0,16,12.5,0,0,TAU);g.fill();g.restore();
+}
+function drawYou(g,Y,t){
+  const x=Y.x,by=Y.y,Z=1.45;
+  g.save();g.translate(x,by);g.scale(Z,Z);g.translate(-x,-by);
+  g.fillStyle='rgba(0,0,0,.25)';rr(g,x-132,by-3,264,10,5);g.fill();g.fillStyle=Y.mat;rr(g,x-130,by-8,260,11,5);g.fill();   // place mat, seen nearly edge-on
+  /* the plate: something small to pick at, or the bowl set out at family meal */
+  const px=x-58;let bx=px,byy=by-14;
+  if(Y.bowl!=null&&Y.food){foodShape(g,Y.food,px,by-5,Y.food.kind==='ramen'||Y.food.kind==='stew'?76:84,Y.bowl);bx=px+4;byy=by-(Y.food.kind==='ramen'||Y.food.kind==='stew'?40:16);}
+  else{g.fillStyle='#f3eee2';ell(g,px,by-9,40,7.5);g.fill();g.fillStyle='#e1d9c8';ell(g,px,by-9,28,4.6);g.fill();
+    for(let i=0;i<Y.max;i++){const f=clamp(Y.treat-i,0,1);if(f<=.01)continue;const tx=px-20+i*20,ty=by-14;
+      if(f<.99){const cut=tx-13+26*f;g.save();g.beginPath();g.rect(tx-14,ty-18,cut-(tx-14),34);g.moveTo(cut+1,ty-6);g.arc(cut-4,ty-6,5,0,TAU);g.moveTo(cut+1,ty+4);g.arc(cut-4,ty+4,5,0,TAU);g.clip('evenodd');treatShape(g,Y.treatKind,tx,ty);g.restore();
+        g.fillStyle='rgba(120,90,50,.5)';ell(g,cut+3,ty+7,1.3,1);g.fill();ell(g,cut+7,ty+5,1,1);g.fill();bx=cut-6;}     // crumbs where the bite was taken
+      else{treatShape(g,Y.treatKind,tx,ty);bx=tx+4;}}}
+  if(Y.bh>0){const u=1-Y.bh;youHand(g,Y,bx-10-u*60,byy+4+u*150,bx-90-u*60,byy+210+u*150);
+    if(Y.bowl!=null&&Y.food){g.strokeStyle=Y.food.kind==='ramen'?'#6b4630':'#b9c1c8';g.lineWidth=3;g.lineCap='round';const hx=bx-10-u*60,hy=byy+4+u*150;ln(g,hx-4,hy+6,hx+26,hy-20);if(Y.food.kind==='ramen')ln(g,hx+2,hy+8,hx+30,hy-16);}}
+  /* the cup: we look down into it a little, so the level can be seen falling with each sip and rising as it is filled */
+  const kd=Y.cupKind,cx=x+52,cy=by-8+Y.lift*190,k=1+Y.lift*.25,w=(kd==='demi'?36:kd==='yunomi'?40:46)*k,h=(kd==='demi'?24:kd==='yunomi'?38:40)*k,ry=w*.27;
+  if(kd==='demi'){g.fillStyle='#f3eee2';ell(g,cx,cy-1,w*.86,ry*.7);g.fill();g.fillStyle='#e1d9c8';ell(g,cx,cy-1,w*.6,ry*.46);g.fill();}
+  g.fillStyle=Y.cupCol;
+  if(kd==='yunomi'){g.beginPath();g.moveTo(cx-w/2,cy-h);g.lineTo(cx+w/2,cy-h);g.lineTo(cx+w*.4,cy);g.lineTo(cx-w*.4,cy);g.fill();ell(g,cx,cy,w*.4,ry*.6);g.fill();g.fillStyle='rgba(255,255,255,.14)';g.fillRect(cx-w*.46,cy-h*.5,w*.92,5*k);}
+  else{g.fillRect(cx-w/2,cy-h,w,h);ell(g,cx,cy,w/2,ry*.75);g.fill();g.strokeStyle=Y.cupCol;g.lineWidth=6*k;g.beginPath();g.arc(cx+w/2+2*k,cy-h*.42,h*.3,-1.25,1.25);g.stroke();
+    if(Y.band){g.fillStyle=Y.band;g.fillRect(cx-w/2,cy-h*.3,w,4*k);}}
+  g.fillStyle=shade(Y.cupCol,1.18);ell(g,cx,cy-h,w/2,ry);g.fill();
+  const iw=w/2-3.5*k,ih=ry-3*k,iy=cy-h+1.5*k;
+  g.fillStyle=shade(Y.cupCol,.6);ell(g,cx,iy,iw,ih);g.fill();
+  g.save();ell(g,cx,iy,iw,ih);g.clip();
+  {const q=Y.cup,d=(1-q)*ry*1.5,sk=1-.2*(1-q);g.fillStyle='rgba(0,0,0,.2)';g.fillRect(cx-iw,iy-ih,iw*2,ih*.8);                      // shadow under the far rim
+    if(q>.02){g.fillStyle=Y.liq;ell(g,cx,iy+d,iw*sk,ih*sk);g.fill();g.fillStyle='rgba(255,255,255,.22)';ell(g,cx-iw*.3,iy+d-ih*.2,iw*.3,ih*.16);g.fill();
+      if(kd==='cocoa'&&q>.35){g.fillStyle='#fbf6ea';ell(g,cx-6*k,iy+d,4.5*k,3*k);g.fill();ell(g,cx+6*k,iy+d+2*k,4*k,2.6*k);g.fill();}}}
+  g.restore();
+  if(Y.hand>0){const u=1-Y.hand,gx=cx+w/2+6*k+u*70,gy=cy-h*.42+u*150;youHand(g,Y,gx,gy,gx+70,gy+200);
+    g.fillStyle=Y.skin;for(let i=-1;i<=1;i++){rr(g,gx-22*k,gy+i*8.5*k-3.6*k,20*k,7.2*k,3.6*k);g.fill();}}                                  // fingers round the cup
+  g.restore();
+  if(Y.pour){const tx=x+52*Z,ty=by-(8+h)*Z;g.strokeStyle=Y.liq;g.lineWidth=5;g.lineCap='round';g.beginPath();g.moveTo(Y.pour[0],Y.pour[1]);g.quadraticCurveTo(Y.pour[0]+8,ty-30,tx,ty);g.stroke();}
+}
+const tidy=c=>{c.tool=null;c.toolClip=null;c.hold=null;c.holdF=null;c.carry=null;c.drawFront=null;c.leanT=0;c.bendT=0;c.pose='side';c.hk=10;c.look=0;c.lookY=0;c.toolAngT=.3;c.errand=false;c.nO[0]=c.nO[1]=0;restArms(c);};
+/* ── the host: tops up the viewer's cup with a nod and a wave, makes the rounds of the line, sets a bowl out for the
+      viewer at family meal, takes the delivery in, and carries the birthday cupcake ── */
+function* hostPour(c,E){
+  const Y=E.YOU;c.tool=E.pot;c.toolAng=c.toolAngT=-.15;c.carry={draw(){}};c.nT=[44,-246];c.fT=[10,-170];
+  yield*walkTo(c,Y.x-150,1,false,Y.frontY);
+  while(Y.ph!==0||Y.bph!==0)yield;Y.busy=true;c.leanT=6;
+  if(Y.treat<=1.01){reachF(c,Y.x-84,Y.y-40);yield*sleep(.7);Y.treat=Y.max;SFX.plateNear();yield*sleep(.3);c.fT=[10,-170];}      // something fresh on the plate
+  reach(c,Y.x+10,Y.y-158);c.toolAngT=.05;yield*sleep(.7);
+  c.toolAngT=.85;yield*sleep(.25);SFX.pourNear((1-Y.cup)*4.6+.4);
+  while(Y.cup<1){const dt=yield;Y.cup=Math.min(1,Y.cup+dt/4.6);Y.hot=1;Y.pour=toolTip(c,56);}                                   // the level creeps up as it fills
+  Y.pour=null;c.toolAngT=-.05;yield*sleep(.35);c.nT=[44,-246];
+  c.leanT=11;c.lookY=6;yield*sleep(.5);c.leanT=2;c.lookY=0;                                                               // a nod...
+  c.fT=[34,-424];yield*sleep(.3);for(let i=0;i<3;i++){c.fT=[48,-428];yield*sleep(.17);c.fT=[24,-428];yield*sleep(.17);}  // ...and a wave
+  c.fT=[10,-170];c.leanT=0;Y.busy=false;yield*sleep(.4);
+}
+function* hostMeal(c,E){
+  const Y=E.YOU,W=E.W,M=W.meal,F=E.food;
+  c.carry={draw:(g,x,y,s)=>foodShape(g,F,x,y+4*s,62*s,1)};c.nT=[56,-262];c.fT=[42,-260];
+  yield*walkTo(c,Y.x-150,1,false,Y.frontY);
+  while(Y.ph!==0||Y.bph!==0)yield;Y.busy=true;c.leanT=8;reach(c,Y.x-70,Y.y-46);reachF(c,Y.x-96,Y.y-46);yield*sleep(.7);
+  c.carry=null;Y.food=F;Y.bowl=1;Y.biteT=R(3,5);SFX.plateNear();yield*sleep(.3);Y.busy=false;c.leanT=0;restArms(c);
+  c.leanT=10;c.lookY=6;yield*sleep(.5);c.leanT=0;c.lookY=0;
+  while(W.meal===M&&M.t<M.dur){const d=R(1.6,3.2);let t=0;const talk=R()<.6;                                                        // keeps the guest company
+    while(t<d){t+=yield;if(talk){c.nT=[46+Math.sin(t*5.2)*8,-258+Math.cos(t*4.1)*10];c.lookY=Math.sin(t*6)*1.6;}else{c.nT=[30,-215];c.lookY=0;}c.fT=[16,-198];}
+    if(R()<.2){SFX.laugh(panX(c.x),true);let u=0;while(u<.9){u+=yield;c.kick=Math.abs(Math.sin(u*14))*.9;}}}
+  while(Y.ph!==0||Y.bph!==0)yield;Y.busy=true;c.leanT=8;reach(c,Y.x-70,Y.y-46);reachF(c,Y.x-96,Y.y-46);yield*sleep(.7);
+  const left=Y.bowl;Y.bowl=null;Y.treat=Y.max;Y.biteT=R(30,50);c.carry={draw:(g,x,y,s)=>foodShape(g,F,x,y+4*s,62*s,left)};c.nT=[56,-262];c.fT=[42,-260];c.leanT=0;SFX.plateNear();Y.busy=false;yield*sleep(.4);
+}
+function* hostDeliv(c,E){
+  const W=E.W,D=W.deliv,V=W.visitor,side=E.enter>960?1:-1,mx=side>0?250:1670;
+  D.st='onway';c.hold=cupToGo;c.nT=[44,-250];c.carry={draw(){}};c.fT=[10,-170];
+  yield*walkTo(c,mx+side*150,-side,true);
+  let w=0;while(D.st!=='here'&&w<30)w+=yield;
+  if(D.st==='here'){c.leanT=10;c.nT=[92,-262];yield*sleep(.5);D.st='swap';yield*sleep(.25);
+    c.hold=null;c.carry=V.box;c.nT=[56,-262];c.fT=[42,-260];c.leanT=0;yield*sleep(.5);
+    c.lookY=5;yield*sleep(.4);c.lookY=0;let t=0;while(D.st!=='gone'&&t<5)t+=yield;}
+  else{D.st='gone';c.hold=null;}
+}
+function* hostBday(c,E){
+  const W=E.W,B=W.bday,list=E.cooks.filter(k=>k.home&&Math.abs(k.y-WORK_Y)<4);if(!list.length){W.bday=null;return;}
+  const k=B.who=pick(list);B.st='walk';B.lit=true;
+  c.hold=(g,h,s)=>cupcake(g,h[0]+6*s,h[1]-10*s,s,B.lit,performance.now()/1000);c.nT=[52,-262];c.carry={draw(){}};c.fT=[14,-180];
+  let x=k.x-k.face*110;yield*walkTo(c,clamp(x,80,1840),k.face,true);
+  let w=0;while(B.st!=='ready'&&w<40){w+=yield;}
+  if(B.st==='ready'){x=clamp(k.x+B.side*112,80,1840);yield*walkTo(c,x,-B.side,true);c.leanT=6;c.nT=[74,-272];yield*sleep(.6);
+    for(const o of E.cooks)if(o!==k&&o.home){o.glance=o.x<k.x?1:-1;o.glanceT=5;}
+    B.st='offer';w=0;while(B.st!=='blown'&&w<8)w+=yield;B.lit=false;
+    for(let i=0;i<4;i++)E.puff(c.x-B.side*84*c.s,c.y-300*c.s,{spread:4,r0:6,r1:14,a:.12,l0:1,l1:2});
+    SFX.laugh(panX(c.x),true);SFX.laugh(panX(k.x),false);let u=0;while(u<1.1){u+=yield;const q=Math.abs(Math.sin(u*14))*.9;for(const o of E.cooks)if(o.home||o===c)o.kick=q;}
+    B.st='give';c.hold=null;yield*sleep(.3);c.nT=[60,-300];yield*sleep(.3);for(let i=0;i<2;i++){c.nO[1]=8;yield*sleep(.13);c.nO[1]=0;yield*sleep(.15);}     // a pat on the shoulder
+    c.leanT=0;restArms(c);yield*sleep(1.2);}
+  B.st='done';c.hold=null;W.bday=null;
+}
+function* hostLife(c,E){
+  const Y=E.YOU,off=E.enter;let first=true;c.x=off;c.y=c.lane;while(PRE)yield;yield*sleep(R(3,6));
+  for(;;){
+    const W=E.W;c.x=off;c.y=c.lane;c.face=c.fa=off>960?-1:1;tidy(c);
+    if(W&&W.meal&&!W.meal.host&&W.meal.t<W.meal.dur-30){W.meal.host=true;c.task={id:'family meal'};yield*hostMeal(c,E);}
+    else if(W&&W.bday&&W.bday.st==='call'){c.task={id:'birthday cupcake'};yield*hostBday(c,E);}
+    else if(W&&W.deliv&&W.deliv.st==='call'){c.task={id:'take the delivery in'};yield*hostDeliv(c,E);}
+    else if(W&&W.mealT<40){yield*sleep(1);continue;}
+    else if(first||Y.cup<.5||Y.treat<=1.01){first=false;c.task={id:'top up the guest'};yield*hostPour(c,E);}
+    else{c.task={id:'make the rounds'};yield*hostRounds(c,E);}
+    yield*walkTo(c,off,off>960?1:-1,true);c.task=null;tidy(c);
+    let w=R(30,60);while(w>0&&!(W&&(W.meal&&!W.meal.host||W.bday&&W.bday.st==='call'||W.deliv&&W.deliv.st==='call')))w-=yield;
+  }
+}
+const cupToGo=(g,h,s)=>{g.fillStyle='#efe6d2';g.beginPath();g.moveTo(h[0]-8*s,h[1]-22*s);g.lineTo(h[0]+10*s,h[1]-22*s);g.lineTo(h[0]+7*s,h[1]+6*s);g.lineTo(h[0]-5*s,h[1]+6*s);g.fill();g.fillStyle='#8a5a3c';g.fillRect(h[0]-7*s,h[1]-14*s,16*s,9*s);g.fillStyle='#3a2a22';rr(g,h[0]-10*s,h[1]-26*s,22*s,5*s,2*s);g.fill();};
+function cupcake(g,x,y,s,lit,t){
+  g.fillStyle='#c9a25a';g.beginPath();g.moveTo(x-11*s,y);g.lineTo(x+11*s,y);g.lineTo(x+8*s,y+15*s);g.lineTo(x-8*s,y+15*s);g.fill();
+  g.fillStyle='#f6d9df';ell(g,x,y-2*s,13*s,8*s);g.fill();ell(g,x,y-9*s,8*s,6*s);g.fill();
+  g.fillStyle='#f3eee2';g.fillRect(x-1.5*s,y-27*s,3*s,15*s);
+  if(lit){const fl=1+.25*Math.sin(t*9)+.15*Math.sin(t*23);g.fillStyle='#ffd27a';ell(g,x,y-32*s,3*s*fl,6*s*fl);g.fill();
+    g.globalCompositeOperation='lighter';g.fillStyle=rg(g,x,y-32*s,0,46*s,0,'rgba(255,200,120,.35)',1,'rgba(255,200,120,0)');g.fillRect(x-46*s,y-78*s,92*s,92*s);g.globalCompositeOperation='source-over';}
+}
+/* ── things the cooks do for the viewer and for each other ── */
+function* hello(c,x,win){      // looks up, nods, and lifts a hand (or their mug) your way
+  c.face=x>c.x?1:-1;c.leanT=-2;yield*sleep(.45);c.lookY=5;c.leanT=6;yield*sleep(.4);c.lookY=0;c.leanT=0;yield*sleep(.15);
+  if(!win&&R()<.4){const col=c.A.apron;c.nT=[30,-190];c.leanT=8;yield*sleep(.4);c.leanT=0;
+    c.hold=(g,h,s)=>{g.fillStyle=col;rr(g,h[0]-9*s,h[1]-14*s,20*s,22*s,5*s);g.fill();g.strokeStyle=col;g.lineWidth=3.5*s;g.beginPath();g.arc(h[0]+12*s,h[1]-3*s,6*s,-1.2,1.2);g.stroke();};
+    c.nT=[66,-360];yield*sleep(.9);c.nO[1]=-10;yield*sleep(.25);c.nO[1]=0;yield*sleep(.5);c.nT=[30,-190];c.leanT=8;yield*sleep(.45);c.hold=null;c.leanT=0;}
+  else{c.nT=[38,-412];yield*sleep(.3);for(let i=0;i<(win?4:3);i++){c.nO[0]=12;yield*sleep(.16);c.nO[0]=-6;yield*sleep(.16);}c.nO[0]=0;}
+  restArms(c);yield*sleep(.3);
+}
+function* bringTaste(c,W){     // walks a small taste over to the viewer's plate
+  const Y=W.E.YOU,hx=c.x,hf=c.face,kind=Y.treatKind;c.errand=true;
+  c.leanT=8;c.nT=[30,-190];c.fT=[24,-190];yield*sleep(.45);c.leanT=0;
+  c.carry={draw:(g,x,y,s)=>{g.fillStyle='#f3eee2';ell(g,x,y-2*s,24*s,5*s);g.fill();g.save();g.translate(x,y-8*s);g.scale(s*1.2,s*1.2);treatShape(g,kind,0,0);g.restore();}};c.nT=[56,-262];c.fT=[42,-260];
+  yield*walkTo(c,Y.x-150,1,false,Y.frontY);
+  let w=0;while((Y.ph!==0||Y.bph!==0||Y.busy)&&w<12)w+=yield;
+  if(!Y.busy&&Y.bowl==null){Y.busy=true;c.leanT=7;reach(c,Y.x-70,Y.y-46);reachF(c,Y.x-96,Y.y-46);yield*sleep(.7);
+    c.carry=null;Y.treat=Math.min(Y.max,Y.treat+1);SFX.plateNear();yield*sleep(.3);restArms(c);Y.busy=false;
+    c.leanT=10;c.lookY=6;yield*sleep(.45);c.leanT=0;c.lookY=0;c.nT=[40,-404];yield*sleep(.3);for(let i=0;i<2;i++){c.nO[0]=12;yield*sleep(.16);c.nO[0]=-6;yield*sleep(.16);}c.nO[0]=0;}
+  c.carry=null;restArms(c);yield*walkTo(c,hx,hf);
+}
+function* mealJoin(c,W){       // family meal: everyone comes round to the front counter and eats standing, facing the viewer's seat
+  const E=W.E,Y=E.YOU,M=W.meal,F=E.food,hx=c.x,hf=c.face,spot=W.spots.find(s=>!s.c);
+  if(!spot){yield*sleep(2);return;}spot.c=c;c.errand=true;
+  c.leanT=10;c.nT=[30,-190];c.fT=[24,-190];yield*sleep(.5);c.leanT=0;
+  c.carry={draw:(g,x,y,s)=>foodShape(g,F,x,y+4*s,60*s,1)};c.nT=[56,-262];c.fT=[42,-260];
+  yield*walkTo(c,spot.x,spot.x<Y.x?1:-1,false,Y.frontY);
+  let lvl=1;c.carry=null;c.fT=[52,-236];c.holdF=(g,h,s,sg)=>foodShape(g,F,h[0]+sg*8*s,h[1]+16*s,56*s,lvl);c.tool=F.tool;c.toolAng=c.toolAngT=1;c.nT=[56,-272];yield*sleep(.5);
+  while(W.meal===M&&M.t<M.dur){const r=R();
+    if(r<.55){c.nT=[54,-258];c.toolAngT=1.2;yield*sleep(R(.45,.7));if(R()<.3)SFX.clink(panX(c.x),.22);
+      c.nT=[84,-362];c.toolAngT=2.9;c.lookY=3;yield*sleep(R(.6,.9));c.lookY=0;lvl=Math.max(.12,lvl-.07);c.nT=[58,-272];c.toolAngT=1;yield*sleep(R(.7,1.7));}
+    else if(r<.85){let t=0;const d=R(1.5,3);while(t<d){t+=yield;c.nT=[62+Math.sin(t*5.2)*8,-292+Math.cos(t*4.1)*10];c.toolAngT=.3;c.lookY=Math.sin(t*6)*1.6;}c.lookY=0;
+      if(R()<.4){SFX.laugh(panX(c.x),R()<.5);let u=0;while(u<.9){u+=yield;const q=Math.abs(Math.sin(u*14))*.9;for(const s of W.spots)if(s.c&&Math.abs(s.x-spot.x)<400)s.c.kick=q;}}}
+    else{c.look=R(-4,6);c.lookY=R()<.5?4:0;yield*sleep(.4);c.lookY=0;yield*sleep(R(.8,1.8));c.look=0;}}
+  spot.c=null;c.tool=null;c.holdF=null;c.carry={draw:(g,x,y,s)=>foodShape(g,F,x,y+4*s,60*s,lvl)};c.nT=[56,-262];c.fT=[42,-260];
+  yield*walkTo(c,hx,hf);c.leanT=10;c.nT=[30,-190];c.fT=[24,-190];yield*sleep(.5);c.carry=null;SFX.clink(panX(c.x),.4);
+}
+function* exhale(c,W){         // the rush is over
+  const k=RI(0,2);
+  if(k===0){c.leanT=-9;c.lookY=-4;c.nT=[6,-474];c.fT=[-6,-470];yield*sleep(1.5);c.nT=[16,-168];c.fT=[-8,-168];c.leanT=0;yield*sleep(.6);let t=0;while(t<1){t+=yield;c.kick=Math.sin(t*TAU)*.8;}c.lookY=0;}
+  else if(k===1){c.nT=[26,-396];c.lookY=4;yield*sleep(.5);let t=0;while(t<.7){t+=yield;c.nO[0]=Math.sin(t*5)*9;}c.nO[0]=0;c.lookY=0;yield*sleep(.2);c.leanT=12;c.fT=[60,-238];yield*sipMug(c);c.leanT=10;yield*sleep(1.2);}
+  else{yield*chat(c,W.E.cooks);c.leanT=-7;c.nT=[-14,-232];c.fT=[-10,-228];yield*sleep(1.6);}
+}
+function* teach(c,all){        // shows the next cook along how it's done
+  if(Math.abs(c.y-WORK_Y)>4||c.pose!=='side')return;
+  const o=all.filter(k=>k!==c&&k.home&&!k.moving&&Math.abs(k.y-WORK_Y)<4&&Math.abs(k.x-c.x)<300&&Math.abs(k.x-c.x)>90).sort((a,b)=>Math.abs(a.x-c.x)-Math.abs(b.x-c.x))[0];
+  if(!o)return;const d=o.x>c.x?1:-1;c.face=d;o.glance=-d;o.glanceT=6.5;c.leanT=8;
+  for(let r=0;r<3;r++){let t=0;while(t<1.1){t+=yield;c.nT=[92+Math.sin(t*9)*16,-232+Math.abs(Math.sin(t*9))*-14];c.fT=[58,-226];}yield*sleep(.25);}     // the motion, slowly, three times
+  c.leanT=0;c.nT=[52,-300];c.fT=[16,-198];c.lookY=4;yield*sleep(.5);c.lookY=0;o.kick=.9;yield*sleep(.5);
+  c.nT=[58,-336];yield*sleep(.8);
+}
+function* fohReply(c,W){       // a word with the server leaning in at the pass
+  const F=W.foh;c.face=F.x>c.x?1:-1;c.leanT=-3;
+  while(W.foh===F&&F.t<F.dur){const dt=yield,talk=Math.sin(F.t*1.3)<-.1;c.nT=talk?[46+Math.sin(F.t*5.2)*8,-258+Math.cos(F.t*4.1)*10]:[30,-215];c.fT=[16,-198];c.lookY=talk?Math.sin(F.t*6)*1.6:0;}
+  let u=0;while(u<.9&&W.foh===F){u+=yield;}
+}
+function* bdayGuest(c,W){      // someone's birthday: turn round, blow the candle out, take the cake
+  const B=W.bday,h=W.E.host;c.bdayDone=true;B.side=h.x>c.x?1:-1;c.face=B.side;B.st='ready';
+  let w=0;while(W.bday===B&&B.st!=='offer'&&w<30){w+=yield;c.nT=[30,-215];c.fT=[16,-198];}
+  if(W.bday!==B||B.st!=='offer')return;
+  c.nT=[40,-330];c.fT=[30,-326];yield*sleep(.7);c.nT=[30,-215];c.fT=[16,-198];                 // hands up: for me?
+  c.leanT=14;c.lookY=5;yield*sleep(.7);B.st='blown';SFX.cloth(panX(c.x));yield*sleep(.5);c.leanT=0;c.lookY=0;
+  w=0;while(W.bday===B&&B.st!=='give'&&w<4)w+=yield;
+  c.nT=[70,-272];yield*sleep(.3);c.hold=(g,hh,s)=>cupcake(g,hh[0]+6*s,hh[1]-10*s,s,false,0);c.nT=[50,-268];yield*sleep(1.2);
+  c.nT=[40,-350];c.lookY=3;yield*sleep(.9);c.lookY=0;c.nT=[50,-268];yield*sleep(.8);        // a bite
+  c.nT=[30,-190];c.leanT=8;yield*sleep(.45);c.hold=null;c.leanT=0;
+}
+/* a visitor through the window (or across the dining room): walks up, stops, waves, walks on */
+function drawRegular(g,Rg,by,k,col,t,umb){
+  const x=Rg.x,bob=Rg.st==='walk'?Math.sin(Rg.ph)*2*k:0,y=by+bob;g.fillStyle=col;g.strokeStyle=col;g.lineCap='round';
+  rr(g,x-17*k,y-118*k,34*k,124*k,14*k);g.fill();ell(g,x,y-134*k,13*k,14*k);g.fill();
+  g.beginPath();g.arc(x,y-140*k,14.5*k,Math.PI,0);g.fill();g.fillRect(x-17*k,y-141*k,34*k,4*k);                                // a hat with a brim
+  if(Rg.st==='wave'){const a=-1.15+Math.sin(t*9)*.38;g.lineWidth=9*k;ln(g,x+Rg.dir*12*k,y-106*k,x+Rg.dir*12*k+Math.cos(a)*Rg.dir*34*k,y-106*k+Math.sin(a)*34*k);
+    ell(g,x+Rg.dir*12*k+Math.cos(a)*Rg.dir*38*k,y-106*k+Math.sin(a)*38*k,6*k,6*k);g.fill();}
+  else if(umb){g.beginPath();g.arc(x+Rg.dir*6*k,y-150*k,52*k,Math.PI,0);g.fill();g.fillRect(x+Rg.dir*6*k-1.5,y-150*k,3,40*k);}
+}
+function drawCatLeap(g,x,y,dir,col,up){
+  const d=shade(col,.78);g.save();g.translate(x,y);g.scale(dir,1);g.rotate(up?-.5:.5);
+  g.strokeStyle=d;g.lineWidth=6;g.lineCap='round';g.beginPath();g.moveTo(-30,-4);g.quadraticCurveTo(-48,-10,-52,-26);g.stroke();
+  g.strokeStyle=col;g.lineWidth=7;ln(g,22,4,40,16);ln(g,14,6,30,20);ln(g,-22,4,-40,14);ln(g,-16,6,-32,18);
+  g.fillStyle=col;ell(g,0,0,34,13);g.fill();ell(g,32,-10,13,11.5);g.fill();
+  g.beginPath();g.moveTo(24,-18);g.lineTo(26,-31);g.lineTo(33,-21);g.fill();g.beginPath();g.moveTo(35,-20);g.lineTo(41,-31);g.lineTo(44,-17);g.fill();g.restore();
+}
+/* ── the room's shared clockwork: timers for all of the above, plus smoke, spatter and a little firelight ── */
+function mkWarm(E){
+  const Y=E.YOU,V=mkCook({lane:940,x:-400,A:E.visitor});
+  const W={E,age:0,meal:null,mealT:900,rush:false,rushT:R(200,320),rushLeft:0,rushId:0,lullT:0,tk:0,helloT:R(40,80),treatT:R(140,220),teachT:R(100,200),
+    bday:null,bdayT:R(1240,1600),deliv:null,delivT:R(240,400),visitor:V,reg:null,regT:R(100,180),wave:null,foh:null,fohT:R(60,110),fohWant:false,
+    cat:E.cat?{st:'shelf',t:R(420,700),k:0}:null,purrT:0,wisps:[],sparks:[],em:{},
+    spots:(E.spots||[630,1220,440,1400,1580,250,1760]).map(x=>({x,c:null}))};
+  E.W=W;V.s=V.A.h;V.y=V.lane;
+  V.box={draw:(g,x,y,s)=>{g.fillStyle='#b98a5a';rr(g,x-36*s,y-44*s,72*s,48*s,4*s);g.fill();g.fillStyle='#a37848';g.fillRect(x-36*s,y-24*s,72*s,4*s);g.fillStyle='#d9c08a';g.fillRect(x-7*s,y-44*s,14*s,48*s);
+    g.fillStyle='#6f9a52';ell(g,x-14*s,y-46*s,12*s,7*s);g.fill();ell(g,x+12*s,y-48*s,11*s,8*s);g.fill();g.fillStyle='#e0703a';ell(g,x+2*s,y-45*s,7*s,5*s);g.fill();}};
+  V.script=(function*(){
+    for(;;){
+      while(!(W.deliv&&W.deliv.st==='onway'))yield;const D=W.deliv,h=E.host,side=E.enter>960?1:-1,mx=side>0?250:1670,edge=side>0?-170:2090;
+      while(D.st==='onway'&&Math.abs(h.x-mx)>620)yield;
+      if(W.deliv!==D||D.st!=='onway'){if(W.deliv===D)W.deliv=null;continue;}
+      V.x=edge;V.y=V.lane;V.face=V.fa=side;V.carry=V.box;V.nT=[56,-262];V.fT=[42,-260];V.task={id:'delivery'};
+      yield*walkTo(V,mx,side,true);D.st='here';
+      let w=0;while(D.st==='here'&&w<34)w+=yield;
+      if(D.st==='swap'){V.leanT=8;yield*sleep(.25);V.carry=null;V.hold=cupToGo;V.nT=[66,-262];V.fT=[0,-150];V.leanT=0;yield*sleep(.6);
+        V.lookY=5;yield*sleep(.4);V.lookY=0;V.nT=[40,-352];yield*sleep(1);V.nT=[50,-262];yield*sleep(.5);                                   // a nod, and the first sip
+        if(R()<.6){SFX.laugh(panX(V.x),R()<.5);let u=0;while(u<.9){u+=yield;V.kick=h.kick=Math.abs(Math.sin(u*14))*.9;}}
+        V.fT=[34,-424];yield*sleep(.3);for(let i=0;i<2;i++){V.fT=[48,-428];yield*sleep(.17);V.fT=[24,-428];yield*sleep(.17);}V.fT=[0,-150];}
+      D.st='gone';yield*walkTo(V,edge,-side,true);V.carry=null;V.hold=null;V.task=null;V.x=-400;W.deliv=null;W.delivT=R(420,700);
+    }})();
+  E.cooks.push(V);
+  /* what a cook should do before picking the next task, if anything */
+  W.next=c=>{
+    c.hurry=W.rush?1.22:1;
+    if(PRE||Math.abs(c.y-WORK_Y)>4)return null;
+    if(W.meal&&W.meal.t<W.meal.dur-24)return['family meal',mealJoin(c,W)];
+    const B=W.bday;if(B&&B.who===c&&B.st==='walk'&&!c.bdayDone)return['birthday',bdayGuest(c,W)];
+    if(W.lullT>0&&c.lullId!==W.rushId){c.lullId=W.rushId;return['breathe out after the rush',exhale(c,W)];}
+    const F=W.foh;if(F&&!F.partner&&F.t<F.dur-4&&c.x<F.x-60&&F.x-c.x<440){F.partner=c;return['chat with the server',fohReply(c,W)];}
+    if(W.wave&&!W.wave.taken&&Math.abs(c.x-W.wave.x)<600){W.wave.taken=true;return['wave to the regular',hello(c,W.wave.x,true)];}
+    if(W.rush||W.mealT<30)return null;
+    if(W.helloT<0){W.helloT=R(100,190);return['say hello to the guest',hello(c,Y.x,false)];}
+    if(W.treatT<0&&Y.treat<=Y.max-1&&!Y.busy&&Y.bowl==null){W.treatT=R(190,320);return['bring the guest a taste',bringTaste(c,W)];}
+    if(W.teachT<0){W.teachT=R(180,340);return['show a technique',teach(c,E.cooks)];}
+    return null;};
+  W.run=function*(c,X){c.task={id:X[0]};yield*X[1];tidy(c);c.task=null;yield*sleep(.25);};
+  /* the server stops at the pass for a chat */
+  W.fohChat=function*(c,glide,x){
+    yield*glide(c,x);c.face=-1;yield*sleep(.3);const F=W.foh={x:c.x,t:0,dur:R(9,15),partner:null};c.leanT=9;c.fT=[44,-198];
+    const near=E.cooks.filter(k=>k.home&&k.x<c.x-60&&Math.abs(k.y-WORK_Y)<4).sort((a,b)=>b.x-a.x)[0];if(near){near.glance=1;near.glanceT=4;}
+    while(F.t<F.dur){F.t+=yield;const talk=Math.sin(F.t*1.3)>-.1;c.nT=talk?[50+Math.sin(F.t*5.2)*8,-262+Math.cos(F.t*4.1)*10]:[40,-200];c.lookY=talk?Math.sin(F.t*6)*1.6:0;}
+    if(R()<.6){SFX.laugh(panX(c.x),false);let u=0;while(u<.9){u+=yield;c.kick=Math.abs(Math.sin(u*14))*.9;if(F.partner)F.partner.kick=c.kick;}}
+    W.foh=null;c.lookY=0;c.leanT=0;restArms(c);yield*sleep(.3);};
+  const emit=(k,rate,dt,fn)=>{W.em[k]=(W.em[k]||0)+rate*dt;while(W.em[k]>1){W.em[k]--;fn();}};
+  W.step=(dt,t)=>{
+    stepYou(Y,dt,E.puff);
+    /* smoke, spatter and firelight at whatever is hot right now */
+    W.hot=E.heat?E.heat():[];
+    W.hot.forEach((h,i)=>{
+      emit('w'+i,(h.smoke==null?.9:h.smoke)*h.k,dt,()=>{if(W.wisps.length<70)W.wisps.push({x:h.x+R(-1,1)*h.w*.4,y:h.y-4,vy:-R(20,34),ph:R(TAU),life:0,max:R(2.6,4.6),w:R(2.5,5)});});
+      if(h.fry)emit('s'+i,11*h.k*h.fry,dt,()=>{if(W.sparks.length<60)W.sparks.push({x:h.x+R(-1,1)*h.w*.5,y:h.y-2,vx:R(-26,26),vy:-R(40,110),life:0,max:R(.25,.6)});});});
+    for(let i=W.wisps.length-1;i>=0;i--){const p=W.wisps[i];p.life+=dt;if(p.life>p.max){W.wisps.splice(i,1);continue;}p.y+=p.vy*dt;p.x+=Math.sin(p.life*1.7+p.ph)*10*dt;}
+    for(let i=W.sparks.length-1;i>=0;i--){const p=W.sparks[i];p.life+=dt;if(p.life>p.max){W.sparks.splice(i,1);continue;}p.vy+=260*dt;p.x+=p.vx*dt;p.y+=p.vy*dt;}
+    if(PRE)return;
+    W.age+=dt;W.helloT-=dt;W.treatT-=dt;W.teachT-=dt;
+    const quiet=!W.meal&&!W.bday&&!W.deliv;
+    /* family meal, every fifteen minutes */
+    if(W.meal){W.meal.t+=dt;if(W.meal.t>W.meal.dur+40||(W.meal.t>W.meal.dur&&!W.spots.some(s=>s.c)&&Y.bowl==null))W.meal=null;}
+    else if((W.mealT-=dt)<0&&!W.bday&&!W.deliv){W.mealT=900;W.meal={t:0,dur:R(80,95),host:false};W.rush=false;W.lullT=0;
+      if(E.call==='bell')SFX.bell(.2);else for(let i=0;i<3;i++)setTimeout(()=>SFX.ladleTap(1.15,.8,.1),i*260);}
+    /* the rush, and the lull after it */
+    if(W.rush){if((W.rushLeft-=dt)<0){W.rush=false;W.lullT=45;W.rushT=R(260,420);}else if((W.tk-=dt)<0){W.tk=R(3,7);SFX.rustle(E.passPan==null?.6:E.passPan);}}
+    else{if(W.lullT>0)W.lullT-=dt;if((W.rushT-=dt)<0&&quiet&&W.mealT>170){W.rush=true;W.rushId++;W.rushLeft=R(55,85);W.tk=1;}}
+    /* the birthday (once), the delivery, the server's chat, the regular at the window */
+    if((W.bdayT-=dt)<0&&quiet&&!W.rush&&W.mealT>120&&W.bdayT>-1e5){W.bdayT=-1e6;W.bday={st:'call',who:null,lit:true};}
+    if((W.delivT-=dt)<0&&quiet&&!W.rush&&W.mealT>120){W.delivT=R(420,700);W.deliv={st:'call'};}
+    if(W.deliv&&W.deliv.st==='call'&&(W.deliv.age=(W.deliv.age||0)+dt)>150)W.deliv=null;
+    if((W.fohT-=dt)<0&&!W.foh){W.fohT=R(200,380);W.fohWant=true;}
+    if(E.win){const Rg=W.reg,w=E.win;
+      if(!Rg){if((W.regT-=dt)<0){W.regT=R(300,520);const dir=R()<.5?1:-1;W.reg={x:dir>0?w.x-60:w.x+w.w+60,dir,st:'walk',stop:w.x+w.w*R(.35,.65),t:0,ph:0,done:false};}}
+      else if(Rg.st==='walk'){Rg.x+=Rg.dir*46*dt;Rg.ph+=dt*5.5;if(!Rg.done&&(Rg.stop-Rg.x)*Rg.dir<=0){Rg.st='turn';Rg.t=0;}if(Rg.x<w.x-70||Rg.x>w.x+w.w+70)W.reg=null;}
+      else if(Rg.st==='turn'){if((Rg.t+=dt)>.8){Rg.st='wave';Rg.t=0;W.wave={x:w.cx==null?w.x+w.w/2:w.cx,t:0,taken:false};}}
+      else{if((Rg.t+=dt)>5.5){Rg.st='walk';Rg.done=true;W.wave=null;}}}
+    /* the cat comes down off the shelf to sleep by the viewer for a while */
+    const C=W.cat;if(C){C.t-=dt;
+      if(C.st==='shelf'){if(C.t<0&&quiet){C.st='down';C.k=0;}}
+      else if(C.st==='down'){if((C.k+=dt/.7)>=1){C.st='away';C.t=5;}}
+      else if(C.st==='away'){if(C.t<0){C.st='up';C.k=0;}}
+      else if(C.st==='up'){if((C.k+=dt/.6)>=1){C.st='front';C.t=R(420,720);W.purrT=2;}}
+      else if(C.st==='front'){if((W.purrT-=dt)<0){W.purrT=2.7;SFX.purr(.3);}if(C.t<0){C.st='off';C.k=0;}}
+      else if(C.st==='off'){if((C.k+=dt/.6)>=1){C.st='back';C.t=5;}}
+      else if(C.st==='back'){if(C.t<0){C.st='home';C.k=0;}}
+      else if(C.st==='home'){if((C.k+=dt/.7)>=1){C.st='shelf';C.t=R(600,900);}}}
+  };
+  /* drawn over the cooks, under the front counter */
+  W.air=(g,t)=>{
+    g.lineCap='round';
+    for(const p of W.wisps){const k=p.life/p.max,a=Math.sin(Math.PI*k)*.2,s=Math.sin(p.life*1.7+p.ph)*8;g.strokeStyle=`rgba(255,244,228,${a})`;g.lineWidth=p.w*(1+k*2.4);
+      g.beginPath();g.moveTo(p.x,p.y);g.quadraticCurveTo(p.x+s,p.y-14-k*10,p.x-s*.6,p.y-30-k*22);g.stroke();}
+    g.globalCompositeOperation='lighter';
+    for(const h of W.hot||[]){if(h.glow===0)continue;const fl=(.75+.25*Math.sin(t*7.3+h.x)+.12*Math.sin(t*17.1+h.x*.3))*h.k*(h.glow||1),r=h.w*1.5+40;
+      g.fillStyle=rg(g,h.x,h.y,0,r,0,`rgba(255,150,70,${.16*fl})`,1,'rgba(255,150,70,0)');g.fillRect(h.x-r,h.y-r,r*2,r*2);}
+    for(const p of W.sparks){g.globalAlpha=1-p.life/p.max;g.fillStyle='#ffe2b0';g.fillRect(p.x,p.y,2.8,2.8);}
+    g.globalAlpha=1;g.globalCompositeOperation='source-over';};
+  /* the cat on its shelf (or on its way) */
+  W.catShelf=(g,t,x,y,col)=>{const C=W.cat;if(!C||C.st==='shelf'){drawCat(g,x,y,t,col);return;}
+    if(C.st==='down'){const k=C.k;drawCatLeap(g,x+k*70,y-18-Math.sin(Math.PI*Math.min(1,k*1.2))*40+k*k*230,1,col,false);}
+    else if(C.st==='home'){const k=1-C.k;drawCatLeap(g,x+k*70,y-18-Math.sin(Math.PI*Math.min(1,k*1.2))*40+k*k*230,-1,col,true);}};
+  /* the viewer's place, and the cat if it has come over */
+  W.front=(g,t)=>{
+    const C=W.cat;
+    if(C&&E.catFront){const[cx,cy]=E.catFront,col=E.catCol||'#c98a4a';
+      if(C.st==='front'){g.save();g.translate(cx,cy);g.scale(-2.1,2.1);drawCat(g,0,0,t,col);g.restore();}
+      else if(C.st==='up'||C.st==='off'){const k=C.st==='up'?C.k:1-C.k;g.save();g.translate(cx+(1-k)*60,cy-40-Math.sin(Math.PI*k*.9)*70+(1-k)*(1-k)*260);g.scale(2.1,2.1);drawCatLeap(g,0,0,-1,col,C.st==='up');g.restore();}}
+    drawYou(g,Y,t);};
+  return W;
+}
 /* shared movement: step back from the counter into a personal lane, walk, step back in.
    Speed eases up from a standstill and settles into the last few steps. */
 function* walkTo(c,x,face,off,fy){   // off = leave the frame (stay in the lane); fy = end at this depth instead of the counter
@@ -935,7 +1251,7 @@ function* walkTo(c,x,face,off,fy){   // off = leave the frame (stay in the lane)
   if(fy){let w=0;while(w<9&&FRONT.some(e=>Math.abs(e.x-x)<120))w+=yield;FRONT.push({c,x});}      // wait for the spot to clear
   if(Math.abs(x-c.x)<8&&Math.abs(c.y-ty)<2){c.face=face;return;}
   c.pose='side';c.moving=true;c.leanT=0;if(!c.carry)restArms(c);
-  const sp=R(128,165),dir=x>c.x?1:-1,far=Math.abs(x-c.x)>150;
+  const sp=R(128,165)*(c.hurry||1),dir=x>c.x?1:-1,far=Math.abs(x-c.x)>150;
   const pts=[];
   if(off){if(Math.abs(c.y-c.lane)>2)pts.push([c.x+dir*34,c.lane]);pts.push([x,c.lane]);}
   else if(Math.abs(c.y-ty)<2&&(!far||fy))pts.push([x,ty]);
@@ -1117,7 +1433,8 @@ SCENES.ramen=function(){
     for(const q of walkers){if(q.wait>0)continue;const by=Y+h+6,bob=Math.sin(q.ph)*2;g.fillStyle='rgba(7,10,20,.88)';
       rr(g,q.x-17,by-118+bob,34,120,14);g.fill();ell(g,q.x,by-134+bob,13,14);g.fill();
       g.beginPath();g.arc(q.x+q.dir*6,by-150+bob,52,Math.PI,0);g.fill();g.fillRect(q.x+q.dir*6-1.5,by-150+bob,3,40);}
-    g.strokeStyle='rgba(175,205,245,.26)';g.lineWidth=1.6;g.beginPath();for(const s of streaks){g.moveTo(s.x,s.y);g.lineTo(s.x-s.l*.13,s.y+s.l);}g.stroke();
+    if(WARM.reg)drawRegular(g,WARM.reg,Y+h+6,1,'rgba(7,10,20,.9)',WARM.age,true);
+    {const rk=rainK(),n=Math.ceil(streaks.length*rk);g.strokeStyle=`rgba(175,205,245,${.14+.13*rk})`;g.lineWidth=1.6;g.beginPath();for(let i=0;i<n;i++){const s=streaks[i];g.moveTo(s.x,s.y);g.lineTo(s.x-s.l*.13,s.y+s.l);}g.stroke();}
     for(const d of drops){
       if(d.vy>0){g.strokeStyle='rgba(190,215,245,.14)';g.lineWidth=d.r;g.beginPath();g.moveTo(d.x,Math.max(d.y0,d.y-70));g.lineTo(d.x,d.y);g.stroke();}
       g.fillStyle='rgba(200,222,250,.5)';ell(g,d.x,d.y,d.r,d.r*1.25);g.fill();}
@@ -1464,6 +1781,7 @@ SCENES.ramen=function(){
   function* runnerLife(c){
     c.x=-150;c.y=c.lane;yield*sleep(R(6,12));
     for(;;){
+      while(WARM.meal)yield;
       const prep=Object.values(STOCK).reduce((a,b)=>a+b,0);
       if(prep<=5||DONE.length>=4)yield*runPrep(c);
       else if(FB[0].n+FB[1].n<=8)yield*runBowls(c);
@@ -1550,6 +1868,7 @@ SCENES.ramen=function(){
   function* life(c){
     yield*sleep(R(0,1.5));
     for(;;){
+      {const X=WARM.next(c);if(X){yield*WARM.run(c,X);continue;}}
       const T=pickTask(c);
       if(!T){yield*idle(c);continue;}
       if(c.at&&c.at!==T.st)locks[c.at]=null;
@@ -1559,14 +1878,20 @@ SCENES.ramen=function(){
       c.tool=null;c.toolClip=null;c.hold=null;c.flame=0;c.pour=0;c.drawFront=null;c.carry=null;c.leanT=0;c.pose='side';c.hk=10;c.look=0;c.lookY=0;c.holdF=null;c.bendT=0;c.errand=false;restArms(c);
       for(const o of[BA,BB,POT1,POT2])if(o.holder===c)o.holder=null;
       c.task=null;c.last=T.id;
-      yield*sleep(.3);const r=R();if(r<.22)yield*flourish(c);else if(r<.44)yield*chat(c,cooks);else if(r<.8)yield*idle(c);
+      yield*sleep(.3);const r=WARM.rush?1:R();if(r<.22)yield*flourish(c);else if(r<.44)yield*chat(c,cooks);else if(r<.8)yield*idle(c);
     }
   }
   for(const c of cooks){c.x=ST[c.at].x;c.face=c.fa=ST[c.at].face;locks[c.at]=c;c.s=c.A.h;c.script=life(c);}
   runner.s=runner.A.h;runner.script=runnerLife(runner);cooks.push(runner);
   const YOU=mkYou({frontY:FRONT_Y,cupKind:'yunomi',cupCol:'#5a6b7c',liq:'#a9b86a',treatKind:'gyoza',mat:'#6a4634'});
   const host=mkCook({lane:944,A:look({jacket:'#2b3550',apron:'#e9e0cf',bib:1,head:'towel',headCol:'#e9e0cf',hair:'#b9b4ac',skin:'#d9a57f',pants:'#23242c',h:1})});
-  host.s=host.A.h;host.script=hostLife(host,{YOU,cooks,enter:-170,pot:'teapot'});cooks.push(host);
+  const ENV={YOU,cooks,host,puff,enter:-170,pot:'teapot',call:'pot',passPan:.6,win:WIN,
+    food:{kind:'ramen',col:'#e9e0cf',rim:'#f6efe2',band:'#b5543c',tool:'sticks'},
+    visitor:look({jacket:'#6b7a4f',apron:'#59663f',head:'cap',headCol:'#4d5a3a',hair:'#2a1d18',skin:'#c98f6b',pants:'#33363e',h:1.02}),
+    heat:()=>[{x:POT1.cx,y:POT1.top-6,w:150,k:1,smoke:.45,glow:0},{x:POT2.cx,y:POT2.top-6,w:110,k:.8,smoke:.35,glow:0},{x:1260,y:556,w:120,k:.8,smoke:.45,glow:0},
+      ...cooks.filter(c=>c.flame>0).map(c=>{const q=toolTip(c,64);return{x:q[0],y:q[1]+18,w:30,k:1,fry:1.3,smoke:1.6,glow:.8};})]};
+  host.s=host.A.h;host.script=hostLife(host,ENV);cooks.push(host);
+  const WARM=mkWarm(ENV),rainK=()=>.66+.34*Math.sin(WARM.age*TAU/1400+1.25);       // the rain eases off and comes back over about twenty-five minutes
 
   /* ── front of house: a server collects bowls from the dining side of the pass; guests move about ── */
   /* seated guests eat, get up and leave, and new ones come in and sit; walkers and tray-carrying staff pass through */
@@ -1594,6 +1919,7 @@ SCENES.ramen=function(){
         yield*glide(c,2090);c.carry=null;restArms(c);yield*sleep(R(1.5,4));idleT=R(10,24);
       }else{
         yield*sleep(.5);
+        if(WARM.fohWant&&!PASSB.length){WARM.fohWant=false;yield*WARM.fohChat(c,glide,1850);}
         if((idleT-=.5)<0){idleT=R(12,28);yield*glide(c,c.x>1800?1460:2090);}       // crossing the room between tables
       }
     }
@@ -1606,7 +1932,7 @@ SCENES.ramen=function(){
   function update(dt,t){
     glows=[];
     stepRain(dt);
-    for(const c of cooks){c.script.next(dt);stepCook(c,dt);}stepYou(YOU,dt,puff);
+    for(const c of cooks){c.script.next(dt);stepCook(c,dt);}WARM.step(dt,t);
     /* front of house */
     for(const p of PASSB)p.life-=dt;
     server.script.next(dt);stepCook(server,dt);
@@ -1625,7 +1951,7 @@ SCENES.ramen=function(){
       else{q.sit=Math.min(1,q.sit+dt*1.3);if(q.sit>=1){q.st='sit';q.t=R(28,80);q.eat=R(2,5);}}
     }
     for(const k of TICK)k.a=clamp(k.a+(k.on?dt*2:-dt*3),0,1);
-    if((bgSfx.ticket-=dt)<0){bgSfx.ticket=R(16,40);const off=TICK.filter(k=>!k.on);if(off.length){const k=pick(off);k.on=true;k.h=RI(48,66);SFX.rustle(panX(k.x));}}
+    if((bgSfx.ticket-=dt*(WARM.rush?5:1))<0){bgSfx.ticket=R(16,40);const off=TICK.filter(k=>!k.on);if(off.length){const k=pick(off);k.on=true;k.h=RI(48,66);SFX.rustle(panX(k.x));}}
     /* steam everywhere */
     emit(0,7,dt,()=>puff(POT1.cx,POT1.top-6,{spread:58}));
     emit(1,5,dt,()=>puff(POT2.cx,POT2.top-6,{spread:44}));
@@ -1641,7 +1967,7 @@ SCENES.ramen=function(){
     if((bgSfx.pan-=dt)<0){bgSfx.pan=R(24,60);SFX.panSet(R(-.2,.5));}
     if((bgSfx.tink-=dt)<0){bgSfx.tink=R(7,20);SFX.tink(R(-.6,.6));}
     if((bgSfx.dish-=dt)<0){bgSfx.dish=R(22,55);SFX.dishes();}
-    if((bgSfx.gust-=dt)<0){bgSfx.gust=R(4,9);if(aud)aud.rainHi.gain.gain.setTargetAtTime(R(.1,.2),ac.currentTime,2.5);}
+    if((bgSfx.gust-=dt)<0){bgSfx.gust=R(4,9);if(aud){const rk=rainK();aud.rainHi.gain.gain.setTargetAtTime(R(.1,.2)*rk,ac.currentTime,2.5);aud.body.gain.gain.setTargetAtTime(.36*rk,ac.currentTime,3);aud.drops.gain.gain.setTargetAtTime(.5*rk,ac.currentTime,3);}}
   }
 
   /* ── per-frame draw (camera transform is already applied) ── */
@@ -1661,7 +1987,7 @@ SCENES.ramen=function(){
     LAMPS.forEach(([x,y,r,a],i)=>{g.globalAlpha=a*(1+.06*Math.sin(t*6.1+i*2)+.04*Math.sin(t*13.3+i*5));g.drawImage(glowC,x-r,y-r,r*2,r*2);});
     for(const[x,y,r,a,col]of glows){g.globalAlpha=1;g.fillStyle=rg(g,x,y,0,r,0,col+Math.round(a*255).toString(16).padStart(2,'0'),1,col+'00');g.fillRect(x-r,y-r,r*2,r*2);}
     g.globalAlpha=1;g.globalCompositeOperation='source-over';
-    g.drawImage(fgC,0,880,W,200,-30,880,W+60,200);drawStock(g);drawYou(g,YOU,t);
+    WARM.air(g,t);g.drawImage(fgC,0,880,W,200,-30,880,W+60,200);drawStock(g);WARM.front(g,t);
     g.drawImage(vigC,-30,-20,W+60,H+40);
   }
 
@@ -1682,7 +2008,7 @@ SCENES.ramen=function(){
     const os=[[58,.018],[116,.01],[174,.005]].map(([f,gn])=>{const o=ac.createOscillator();o.frequency.value=f;const v=ac.createGain();v.gain.value=gn;o.connect(v);v.connect(hum);o.start();return o;});
     stops.push({stop(){os.forEach(o=>{try{o.stop();}catch(e){}});hum.disconnect();}});
     const stopChat=startChatter({voices:6,level:1,density:.5,call:[24,55]});   // quieter kitchen
-    aud={rainHi,stop(){stops.forEach(s=>s.stop());stopChat();SND.torchOff();}};
+    aud={rainHi,body:stops[1],drops:stops[2],stop(){stops.forEach(s=>s.stop());stopChat();SND.torchOff();}};
   }
   function stopAudio(){if(aud){aud.stop();aud=null;}}
 
@@ -1695,7 +2021,7 @@ SCENES.ramen=function(){
     {root:'E4',ch:[{n:['G3','B3','D4','F#4'],b:'E2'},{n:['E3','G3','B3','D4'],b:'C2'},{n:['G3','B3','C4','E4'],b:'A1'},{n:['A3','D#4','G4'],b:'B1'}]},
   ]};
   const otherSounds='Noodle baskets shaking, noodles dropping, broth pouring, bowls set down and slid along the pass, bowl clinks, the torch, cloth wipes, ticket rustle, and dish clatter from the back sink.';
-  return{id:'ramen',otherSounds,update,draw,startAudio,stopAudio,music,_dbg:{cooks,TASKS,recent,LB,PB,PASSB,SHELF,BA,BB,server,STOCK,DONE,FB}};
+  return{id:'ramen',otherSounds,update,draw,startAudio,stopAudio,music,_dbg:{WARM,YOU,cooks,TASKS,recent,LB,PB,PASSB,SHELF,BA,BB,server,STOCK,DONE,FB}};
 };
 
 /* ═════════ SCENE 2: DINER, SUNDAY MORNING ═════════ */
@@ -1839,11 +2165,12 @@ SCENES.diner=function(){
       g.fillStyle='rgba(215,235,242,.9)';if(c.van)rr(g,c.x+d*30-22,by-70,44,24,6);else rr(g,c.x-34-d*8,by-68,72,22,8);g.fill();
       g.fillStyle='#fff3c8';ell(g,c.x+d*76,by-32,4,5);g.fill();
       for(const wx of[-48,48]){g.fillStyle='#3b3a40';ell(g,c.x+wx,by-10,14,14);g.fill();g.fillStyle='#c9d1d6';ell(g,c.x+wx,by-10,5.5,5.5);g.fill();}}
+    if(WARM.reg)drawRegular(g,WARM.reg,Y+h+34,1.55,'#4f6482',WARM.age,false);
     g.restore();g.fillStyle='#c9d1d6';for(let i=1;i<4;i++)g.fillRect(X+i*w/4-4,Y,8,h);
   }
-  function drawWindowLife(g,t){   // light shafts and dust
-    g.globalCompositeOperation='lighter';
-    for(const[a,b,al]of[[130,300,.05],[430,560,.04],[690,820,.045]]){g.fillStyle=`rgba(255,244,205,${al*(1+.08*Math.sin(t*.3+a))})`;g.beginPath();g.moveTo(WIN.x+a,WIN.y+WIN.h);g.lineTo(WIN.x+b,WIN.y+WIN.h);g.lineTo(WIN.x+b+330,H);g.lineTo(WIN.x+a+250,H);g.fill();}
+  function drawWindowLife(g,t){   // light shafts and dust; the shafts steepen through the hour as the sun climbs
+    const sun=170*clamp(WARM.age/3600,0,1);g.globalCompositeOperation='lighter';
+    for(const[a,b,al]of[[130,300,.05],[430,560,.04],[690,820,.045]]){g.fillStyle=`rgba(255,244,205,${al*(1+.08*Math.sin(t*.3+a))})`;g.beginPath();g.moveTo(WIN.x+a,WIN.y+WIN.h);g.lineTo(WIN.x+b,WIN.y+WIN.h);g.lineTo(WIN.x+b+330-sun,H);g.lineTo(WIN.x+a+250-sun,H);g.fill();}
     g.fillStyle='rgba(255,246,215,.5)';for(const m of motes){g.globalAlpha=.25+.25*Math.sin(t*.9+m.ph);g.fillRect(m.x+Math.sin(t*.25+m.ph)*14,m.y,2,2);}
     g.globalAlpha=1;g.globalCompositeOperation='source-over';
   }
@@ -2157,6 +2484,7 @@ SCENES.diner=function(){
   function* life(c){
     yield*sleep(R(0,1.5));
     for(;;){
+      {const X=WARM.next(c);if(X){yield*WARM.run(c,X);continue;}}
       const T=pickTask(c);if(!T){yield*idle(c);continue;}
       if(c.at&&c.at!==T.st)locks[c.at]=null;
       locks[T.st]=c;c.at=T.st;c.task=T;recent.push(T.id);if(recent.length>5)recent.shift();
@@ -2166,7 +2494,7 @@ SCENES.diner=function(){
       for(const o of[BA,BB,SPL,SPR,BAT])if(o.holder===c)o.holder=null;
       c.task=null;c.last=T.id;yield*sleep(.3);
       {const HB={boardA:BA,boardB:BB}[c.at];if(HB&&!HB.holder&&R()<.12&&Math.abs(c.x-ST[c.at].x)<6){c.face=ST[c.at].face;yield*honeKnife(c,HB,takeKnife,putKnife);}}
-      const r=R(),S=ST[c.at];if(r<.18&&Math.abs(c.x-S.x)<60){c.face=S.face;yield*wipeCounter(c);}else if(r<.38)yield*chat(c,cooks);else if(r<.74)yield*idle(c);
+      const r=WARM.rush?1:R(),S=ST[c.at];if(r<.18&&Math.abs(c.x-S.x)<60){c.face=S.face;yield*wipeCounter(c);}else if(r<.38)yield*chat(c,cooks);else if(r<.74)yield*idle(c);
     }
   }
   for(const c of cooks){c.x=ST[c.at].x;c.face=c.fa=ST[c.at].face;locks[c.at]=c;c.s=c.A.h;c.script=life(c);}
@@ -2184,11 +2512,17 @@ SCENES.diner=function(){
     if(DONE.length){yield*walkTo(c,632-70,1,false,FRONT_Y);yield*bendTo(c,632,FY-40);c.carry={kind:'tubs',cols:DONE.splice(0).slice(-3)};SFX.tick(panX(632));carryPose(c);yield*rise(c);}
     yield*walkTo(c,-150,-1,true);c.carry=null;c.task=null;}
   function* runnerLife(c){c.x=-150;c.y=c.lane;yield*sleep(R(6,12));
-    for(;;){if(STOCK.veg+STOCK.ham<=2||DONE.length>=4)yield*runPrep(c);else if(plates()<=8)yield*runPlates(c);else{yield*sleep(.5);continue;}yield*sleep(R(2,5));}}
+    for(;;){while(WARM.meal)yield;if(STOCK.veg+STOCK.ham<=2||DONE.length>=4)yield*runPrep(c);else if(plates()<=8)yield*runPlates(c);else{yield*sleep(.5);continue;}yield*sleep(R(2,5));}}
   runner.s=runner.A.h;runner.script=runnerLife(runner);cooks.push(runner);
   const YOU=mkYou({frontY:FRONT_Y,cupKind:'mug',cupCol:'#f3eee2',band:'#5fa7a0',liq:'#4a2c1c',treatKind:'pie',mat:'#d2553f'});
   const host=mkCook({lane:944,A:look({jacket:'#e59a9a',apron:'#f8f4ea',head:'bun',headCol:'#f8f4ea',hair:'#c9c2b6',skin:'#e6b48e',pants:'#3b4658',h:.96})});
-  host.s=host.A.h;host.script=hostLife(host,{YOU,cooks,enter:2090,pot:'pot'});cooks.push(host);
+  const ENV={YOU,cooks,host,puff,enter:2090,pot:'pot',call:'bell',passPan:.6,win:WIN,
+    food:{kind:'plate',col:'#f3eee2',rim:'#e1d9c8',food:['#e8b93e','#f6efe2','#b5543c','#d9a052'],tool:'fork'},
+    visitor:look({jacket:'#b5543c',apron:'#8f4330',head:'cap',headCol:'#3b4658',hair:'#5a3a22',skin:'#e6b48e',pants:'#3b4658',h:1.02}),
+    heat:()=>[...EGG.map((e,i)=>e&&{x:ES[i][0],y:ES[i][1]-4,w:34,k:.7,fry:1,smoke:.5,glow:.5}),...HS.map((h,i)=>h&&{x:HSP[i][0],y:HSP[i][1]-4,w:44,k:.8,fry:1,smoke:.6,glow:.5}),
+      BAC.some(b=>b)&&{x:BX,y:590,w:50,k:1,fry:1.6,smoke:.9,glow:.6},...CK.map((k,i)=>k&&{x:CS[i][0],y:CS[i][1]-4,w:34,k:.5,fry:.3,smoke:.4,glow:.4}),OM&&{x:OMS[0],y:OMS[1]-4,w:50,k:.6,fry:.6,smoke:.5,glow:.5}].filter(Boolean)};
+  host.s=host.A.h;host.script=hostLife(host,ENV);cooks.push(host);
+  const WARM=mkWarm(ENV);
 
   /* ── front of house: the server collects plates, pours coffee and tops up the syrup; guests come and go ── */
   const SEATS=[[1612,528],[1668,534],[1722,528],[1778,534],[1832,528]].map(([x,y])=>({sx:x,y,x,sit:1,st:'sit',t:R(12,70),eat:R(1,6),dip:0,dir:1,ph:R(TAU)}));
@@ -2225,6 +2559,7 @@ SCENES.diner=function(){
         c.leanT=8;reach(c,MUG[1].x-6,CT-14);reachF(c,MUG[0].x-6,CT-14);yield*sleep(.6);MUG.forEach(m=>{m.here=true;m.f=0;});c.carry=null;c.leanT=0;restArms(c);mugT=R(12,26);yield*sleep(.4);
       }else{
         yield*sleep(.5);mugT-=.5;out-=.5;
+        if(WARM.fohWant&&!PICK){WARM.fohWant=false;yield*WARM.fohChat(c,glide,1850);}
         if((idleT-=.5)<0){idleT=R(12,26);yield*glide(c,c.x>1800?1460:2090);}
       }
     }
@@ -2234,7 +2569,7 @@ SCENES.diner=function(){
   /* ── per-frame update ── */
   const bgSfx={lid:R(10,25),pan:R(15,40),tink:R(4,12),dish:R(8,22),tk:R(12,25),siz:0};let aud=null;
   function update(dt,t){
-    for(const c of cooks){c.script.next(dt);stepCook(c,dt);}stepYou(YOU,dt,puff);
+    for(const c of cooks){c.script.next(dt);stepCook(c,dt);}WARM.step(dt,t);
     server.script.next(dt);stepCook(server,dt);
     stepStreet(dt);if(OM){OM.age+=dt;if(OM.folded)OM.ft+=dt;}
     for(const e of EGG)if(e)e.age+=dt;for(const h of HS)if(h)h.age+=dt;for(const b of BAC)if(b)b.age+=dt;for(const k of CK)if(k){k.age+=dt;if(k.flip)k.ft+=dt;}
@@ -2244,7 +2579,7 @@ SCENES.diner=function(){
     if(TOAST.up>0&&TOAST.up<1)TOAST.up=Math.min(1,TOAST.up+dt*9);
     BELL.ring=Math.max(0,BELL.ring-dt*1.2);WHEEL.a+=WHEEL.v*dt;WHEEL.v*=Math.exp(-dt*1.7);WB.froth=Math.max(.1,WB.froth-dt*.004);
     if(PICK)PICK.life-=dt;
-    if((bgSfx.tk-=dt)<0){bgSfx.tk=R(14,30);const k=WHEEL.slots.findIndex((on,i)=>!on&&Math.sin(WHEEL.a+i*TAU/8)<-.4);if(k>=0)WHEEL.slots[k]=1;}   // new orders get clipped on the far side
+    if((bgSfx.tk-=dt*(WARM.rush?5:1))<0){bgSfx.tk=R(14,30);const k=WHEEL.slots.findIndex((on,i)=>!on&&Math.sin(WHEEL.a+i*TAU/8)<-.4);if(k>=0)WHEEL.slots[k]=1;}   // new orders get clipped on the far side
     for(const q of GUESTS){if(q.wait>0){q.wait-=dt;continue;}q.x+=q.dir*q.v*dt;q.ph+=dt*q.v*.15;
       if(q.x>1620&&q.x<1900&&R()<dt*(q.tray?.09:.05))q.wait=q.tray?R(.8,2):R(1.2,4);
       if(q.x<1470||q.x>2030){q.dir=q.x<1700?1:-1;q.x=clamp(q.x,1470,2030);q.wait=q.tray?R(1.5,6):R(2,9);q.v=q.tray?R(58,84):R(26,46);}}
@@ -2286,7 +2621,7 @@ SCENES.diner=function(){
     const order=cooks.slice().sort((a,b)=>a.y-b.y);for(const c of order)drawCook(g,c,t);
     for(const p of steam){const k=p.life/p.max,r=p.r*(1+k*1.7);g.globalAlpha=p.a*Math.sin(Math.PI*k);g.drawImage(puffC,p.x-r,p.y-r,r*2,r*2);}
     g.globalAlpha=1;drawWindowLife(g,t);
-    g.drawImage(fgC,0,880,W,200,-30,880,W+60,200);drawStock(g);drawYou(g,YOU,t);
+    WARM.air(g,t);g.drawImage(fgC,0,880,W,200,-30,880,W+60,200);drawStock(g);WARM.front(g,t);
     g.drawImage(vigC,-30,-20,W+60,H+40);
   }
   function startAudio(){
@@ -2308,7 +2643,7 @@ SCENES.diner=function(){
     {root:'D4',ch:[{n:['F#3','A3','C#4','E4'],b:'D2'},{n:['A3','D4','F#4'],b:'B1'},{n:['G3','B3','D4','F#4'],b:'E2'},{n:['G3','B3','C#4','F#4'],b:'A1'}]},
   ]};
   const otherSounds='Egg cracks, food hitting the griddle, the hash brown press, pancake flips, toast popping and being buttered, the order bell, coffee and syrup pouring, plates set down and slid along the pass, cloth wipes, ticket rustle, and dish clatter from the back sink.';
-  return{id:'diner',otherSounds,update,draw,startAudio,stopAudio,music,_dbg:{cooks,TASKS,recent,server,PL,PR,F,STOCK,DONE,FB,BA,BB,get PICK(){return PICK;},PASSB:[],LB:{},PB:[],SHELF:[]}};
+  return{id:'diner',otherSounds,update,draw,startAudio,stopAudio,music,_dbg:{WARM,YOU,cooks,TASKS,recent,server,PL,PR,F,STOCK,DONE,FB,BA,BB,get PICK(){return PICK;},PASSB:[],LB:{},PB:[],SHELF:[]}};
 };
 
 /* ═════════ SCENE 3: BISTRO, BUSY EVENING ═════════ */
@@ -2677,6 +3012,7 @@ SCENES.bistro=function(){
   function* life(c){
     yield*sleep(R(0,1.5));
     for(;;){
+      {const X=WARM.next(c);if(X){yield*WARM.run(c,X);continue;}}
       const T=pickTask(c);if(!T){yield*idle(c);continue;}
       if(c.at&&c.at!==T.st)locks[c.at]=null;
       locks[T.st]=c;c.at=T.st;c.task=T;recent.push(T.id);if(recent.length>5)recent.shift();
@@ -2686,7 +3022,7 @@ SCENES.bistro=function(){
       for(const o of[BA,BB,POT])if(o.holder===c)o.holder=null;if(POT.h2===c)POT.h2=null;for(const p of[PAN1,PAN2])if(p.held===c){p.held=null;p.hd=p.hd0;}if(P.busy&&!cooks.some(k=>k!==c&&k.task))P.busy=false;
       c.task=null;c.last=T.id;yield*sleep(.3);
       {const HB={boardA:BA,boardB:BB}[c.at];if(HB&&!HB.holder&&R()<.12&&Math.abs(c.x-ST[c.at].x)<6){c.face=ST[c.at].face;yield*honeKnife(c,HB,takeKnife,putKnife);}}
-      const r=R(),S=ST[c.at];if(r<.16&&Math.abs(c.x-S.x)<60&&c.at!=='sink'){yield*wipeCounter(c);}else if(r<.38)yield*chat(c,cooks);else if(r<.74)yield*idle(c);
+      const r=WARM.rush?1:R(),S=ST[c.at];if(r<.16&&Math.abs(c.x-S.x)<60&&c.at!=='sink'){yield*wipeCounter(c);}else if(r<.38)yield*chat(c,cooks);else if(r<.74)yield*idle(c);
     }
   }
   for(const c of cooks){c.x=ST[c.at].x;c.face=c.fa=ST[c.at].face;locks[c.at]=c;c.s=c.A.h;c.script=life(c);}
@@ -2709,13 +3045,18 @@ SCENES.bistro=function(){
     if(SINK.stack>=4){c.leanT=10;reach(c,236,CT-30);reachF(c,216,CT-30);yield*sleep(.7);const n=SINK.stack;SINK.stack=0;c.carry={draw:(g,x,y)=>{for(let i=0;i<Math.min(4,n);i++){g.fillStyle=COPD;rr(g,x-28,y-4-i*10,56,10,4);g.fill();}}};c.leanT=0;carryPose(c);yield*sleep(.4);}
     restArms(c);if(c.carry)carryPose(c);yield*walkTo(c,-150,-1,true);c.carry=null;c.task=null;}
   function* runnerLife(c){c.x=-150;c.y=c.lane;yield*sleep(R(6,12));let sinkWait=R(40,70);
-    for(;;){const prep=STOCK.garlic+STOCK.herb+STOCK.shallot;sinkWait-=.5;
+    for(;;){while(WARM.meal)yield;const prep=STOCK.garlic+STOCK.herb+STOCK.shallot;sinkWait-=.5;
       if(prep<=4||DONE.length>=4)yield*runPrep(c);else if(plates()<=8)yield*runPlates(c);else if(sinkWait<0&&(SINK.wet===0||SINK.towels<=1||SINK.stack>=5)){yield*runSink(c);sinkWait=R(70,130);}else{yield*sleep(.5);continue;}
       yield*sleep(R(2,5));}}
   runner.s=runner.A.h;runner.script=runnerLife(runner);cooks.push(runner);
   const YOU=mkYou({frontY:FRONT_Y,cupKind:'demi',cupCol:'#f3eee2',liq:'#3a2218',treatKind:'bread',mat:'#e9e0cf'});
   const host=mkCook({lane:944,A:look({jacket:'#f1ece0',apron:'#c9a25a',bib:1,head:'cap',headCol:'#f1ece0',hair:'#8a8580',skin:'#c48f6a',pants:'#1f2226',h:1.04})});
-  host.s=host.A.h;host.script=hostLife(host,{YOU,cooks,enter:2090,pot:'pot'});cooks.push(host);
+  const ENV={YOU,cooks,host,puff,enter:2090,pot:'pot',call:'bell',passPan:.6,win:{x:1562,y:330,w:400,h:268,cx:1700},
+    food:{kind:'stew',col:'#f1ece0',rim:'#fbf6ea',food:['#a8552f','#e0a24a','#6f9a52','#efe6c8'],tool:'spoon'},
+    visitor:look({jacket:'#3d4a5c',apron:'#2f3947',head:'cap',headCol:'#2a323d',hair:'#1a1416',skin:'#b98060',pants:'#23262c',h:1.02}),
+    heat:()=>[PAN1,PAN2].map(q=>({x:q.x,y:q.y-12,w:74,k:(q.meat&&q.meat.length)||q.veg?1:.3,fry:1,smoke:.8,glow:.7}))};
+  host.s=host.A.h;host.script=hostLife(host,ENV);cooks.push(host);
+  const WARM=mkWarm(ENV);
 
   /* ── front of house ── */
   const SEATS=[[1612,524],[1680,530],[1800,518],[1856,526],[1916,520]].map(([x,y])=>({sx:x,y,x,sit:1,st:'sit',t:R(12,70),eat:R(1,6),dip:0,dir:1,ph:R(TAU)}));
@@ -2732,7 +3073,7 @@ SCENES.bistro=function(){
         yield*glide(c,Q.cx+84);c.face=-1;yield*sleep(.3);c.leanT=12;reach(c,Q.cx+26,CT-20);reachF(c,Q.cx-22,CT-20);yield*sleep(.65);
         PICK=null;c.carry={draw:(g,x,y)=>drawPlate(g,x,y+6,Q.p)};SFX.slide(panX(Q.cx));c.leanT=0;carryPose(c);yield*sleep(.45);
         yield*glide(c,2100);c.carry=null;restArms(c);yield*sleep(R(1.5,3));idleT=R(8,20);
-      }else{yield*sleep(.5);if((idleT-=.5)<0){idleT=R(12,26);yield*glide(c,c.x>1800?1460:2090);}}
+      }else{yield*sleep(.5);if(WARM.fohWant&&!PICK){WARM.fohWant=false;yield*WARM.fohChat(c,glide,1850);}if((idleT-=.5)<0){idleT=R(12,26);yield*glide(c,c.x>1800?1460:2090);}}
     }}
   server.s=server.A.h;server.script=serverLife(server);
 
@@ -2745,7 +3086,7 @@ SCENES.bistro=function(){
   }
   function update(dt,t){
     glows=[];
-    for(const c of cooks){c.script.next(dt);stepCook(c,dt);}stepYou(YOU,dt,puff);
+    for(const c of cooks){c.script.next(dt);stepCook(c,dt);}WARM.step(dt,t);
     server.script.next(dt);stepCook(server,dt);stepPan(PAN1,dt);stepPan(PAN2,dt);
     for(const m of PAN1.meat){m.age+=dt;if(m.flip)m.ft+=dt;m.baste=Math.max(0,m.baste-dt);}
     if(PAN2.veg){PAN2.veg.age+=dt;for(const b of PAN2.veg.bits){if(b.a>0||b.va>0){b.a+=b.va*dt;b.va-=820*dt;if(b.a<=0){b.a=0;b.va=0;b.lx=clamp(b.lx+R(-8,8),-40,40);}}}}
@@ -2782,7 +3123,8 @@ SCENES.bistro=function(){
     for(const q of GUESTS){const k=.8+.16*q.d,hy=462+22*q.d+(q.wait>0?0:Math.sin(q.ph)*2);
       g.fillStyle=`rgba(26,13,10,${.42+.16*q.d})`;ell(g,q.x,hy,17*k,19*k);g.fill();rr(g,q.x-25*k,hy+17*k,50*k,170,20*k);g.fill();
       if(q.tray){const tx=q.x+q.dir*30*k,ty=hy+34*k;ell(g,tx,ty,20*k,4.5*k);g.fill();ell(g,tx-7*k,ty-6*k,8*k,6*k);g.fill();}}
-    for(const[x,y]of[[1646,570],[1840,564],[1740,548]]){const fl=1+.25*Math.sin(t*9+x)+.15*Math.sin(t*23+x);g.fillStyle='rgba(240,230,210,.8)';g.fillRect(x-2,y,4,14);g.fillStyle='#ffd27a';ell(g,x,y-5,3*fl,6*fl);g.fill();
+    if(WARM.reg)drawRegular(g,WARM.reg,600,.95,'rgba(26,13,10,.8)',WARM.age,false);
+    for(const[x,y0]of[[1646,570],[1840,564],[1740,548]]){const fl=1+.25*Math.sin(t*9+x)+.15*Math.sin(t*23+x),ch=14-9*((WARM.age/2700+hash(x))%1),y=y0+14-ch;g.fillStyle='rgba(240,230,210,.8)';g.fillRect(x-2,y,4,ch);g.fillStyle='#ffd27a';ell(g,x,y-5,3*fl,6*fl);g.fill();
       g.globalCompositeOperation='lighter';g.globalAlpha=.16*fl;g.drawImage(glowC,x-70,y-75,140,140);g.globalAlpha=1;g.globalCompositeOperation='source-over';}       // candles
     drawCook(g,server,t);g.restore();
     g.fillStyle=BRASS;g.fillRect(350,300,56,6);drawRadio(g,378,300,t,{body:'#3a2a22'});drawVase(g,1905,CT,t,['#b5543c','#efe6d2','#c9a25a']);
@@ -2793,7 +3135,7 @@ SCENES.bistro=function(){
     for(const p of steam){const k=p.life/p.max,r=p.r*(1+k*1.7);g.globalAlpha=p.a*Math.sin(Math.PI*k);g.drawImage(puffC,p.x-r,p.y-r,r*2,r*2);}
     g.globalAlpha=1;drawFlare(g,PAN1,t);drawFlare(g,PAN2,t);
     g.globalCompositeOperation='lighter';LAMPS.forEach(([x,y,r,a],i)=>{g.globalAlpha=a*(1+.03*Math.sin(t*5+i*2));g.drawImage(glowC,x-r,y-r,r*2,r*2);});g.globalAlpha=1;g.globalCompositeOperation='source-over';
-    g.drawImage(fgC,0,880,W,200,-30,880,W+60,200);drawStock(g);drawYou(g,YOU,t);
+    WARM.air(g,t);g.drawImage(fgC,0,880,W,200,-30,880,W+60,200);drawStock(g);WARM.front(g,t);
     g.drawImage(vigC,-30,-20,W+60,H+40);
   }
   function startAudio(){
@@ -2816,7 +3158,7 @@ SCENES.bistro=function(){
     {root:'G3',ch:[{n:['F3','Bb3','D4','A4'],b:'G1',t:3},{n:['E3','Bb3','D4','G4'],b:'C2',t:4},{n:['E3','A3','C4','G4'],b:'F2',t:4},{n:['F#3','C4','Eb4'],b:'D2',t:4}]},
   ]};
   const otherSounds='Meat and vegetables hitting hot pans, pan tosses, the flame flare, wine and sauce pouring, plates set down and slid along the pass, tweezers, towels, cloth wipes, and dish clatter from the back sink.';
-  return{id:'bistro',otherSounds,update,draw,startAudio,stopAudio,music,_dbg:{cooks,TASKS,recent,server,P,F,PAN1,PAN2,SINK,STOCK,DONE,FB,BA,BB,get PICK(){return PICK;}}};
+  return{id:'bistro',otherSounds,update,draw,startAudio,stopAudio,music,_dbg:{WARM,YOU,cooks,TASKS,recent,server,P,F,PAN1,PAN2,SINK,STOCK,DONE,FB,BA,BB,get PICK(){return PICK;}}};
 };
 
 /* ═════════ SCENE 4: BAKERY, SNOWY PRE-DAWN ═════════ */
@@ -2901,7 +3243,10 @@ SCENES.bakery=function(){
     if(tr)for(let i=0;i<tr.n;i++){const row=i>=3?1:0;croissant(g,x-36+(i%3)*36+(row?0:0),y-9-row*0+(row?-7:0),row?.8:.95,tr.bake||0,tr.glaze||0,tr.sugar||0);}}
   /* ── dynamic props ── */
   function drawWindow(g,t){
-    const{x:X,y:Y,w,h}=WIN;g.save();g.beginPath();g.rect(X,Y,w,h);g.clip();g.fillStyle='rgba(240,246,255,.9)';
+    const{x:X,y:Y,w,h}=WIN;g.save();g.beginPath();g.rect(X,Y,w,h);g.clip();
+    {const k=clamp(WARM.age/3000,0,1);if(k>0){g.fillStyle=lg(g,0,Y,0,Y+h,0,`rgba(96,110,170,${.3*k})`,.55,`rgba(240,150,120,${.42*k})`,1,`rgba(255,196,128,${.6*k})`);g.fillRect(X,Y,w,h);}}       // dawn comes up behind the snow over the first fifty minutes
+    if(WARM.reg)drawRegular(g,WARM.reg,Y+h+6,1,'#75606c',WARM.age,false);
+    g.fillStyle='rgba(240,246,255,.9)';
     for(const f of flakes){ell(g,f.x+Math.sin(t*.8+f.ph)*10,f.y,f.r,f.r);g.fill();}
     g.fillStyle=lg(g,X,Y,X+w,Y+h,0,'rgba(255,255,255,.07)',.5,'rgba(255,255,255,0)');g.fillRect(X,Y,w,h);
     for(const[cx,cy]of[[X,Y],[X+w,Y],[X,Y+h],[X+w,Y+h]]){g.fillStyle=rg(g,cx,cy,0,70,0,'rgba(230,240,255,.4)',1,'rgba(230,240,255,0)');g.fillRect(cx-70,cy-70,140,140);}     // frost in the corners
@@ -3087,9 +3432,10 @@ SCENES.bakery=function(){
       if((sk-=dt)<0){sk=.5;SFX.sprinkle(px);}if(R()<.6){const tp=toolTip(c,30);sugar.push({x:tp[0]+R(-8,8),y:tp[1],vy:R(50,90),end:CT-12+R(-3,3)});}}
     c.nO[1]=0;reach(c,c.x-26,656);c.leanT=14;yield*sleep(.5);c.tool=null;
   }
-  const carryTray=tr=>({draw:(g,x,y)=>trayShape(g,x,y+8,tr)});
+  /* a tray rides on both hands: one under the near end, one further along */
+  const trayPose=c=>{c.nT=[76,-246];c.fT=[26,-246];c.nO[0]=c.nO[1]=0;},carryTray=(tr,c)=>({draw:(g,x,y,s)=>trayShape(g,x+(c.fa<0?-1:1)*18*s,y-29*s,tr)});
   function* rackTray(c){
-    const tr=F.tray;c.face=-1;c.leanT=12;both(c,F.cx,CT-12,60);yield*sleep(.55);F.tray=null;c.carry=carryTray(tr);c.leanT=0;carryPose(c);yield*sleep(.4);
+    const tr=F.tray;c.face=-1;c.leanT=12;both(c,F.cx,CT-12,60);yield*sleep(.55);F.tray=null;c.carry=carryTray(tr,c);c.leanT=0;trayPose(c);yield*sleep(.4);
     RACK.busy=true;yield*walkTo(c,205,-1);const y=420+RACK.n*46;c.bendT=clamp((y-600)/150,0,1);both(c,150,y-6,24);yield*sleep(.7);
     c.carry=null;RACK.slide={x:196,y};SFX.trayRack(panX(RACK.x));let t=0;while(t<.5){t+=yield;RACK.slide.x=lerp(196,RACK.x,ease(t/.5));both(c,Math.max(140,RACK.slide.x+58),y-6,24);}
     RACK.slide=null;RACK.n++;RACK.busy=false;yield*rise(c);restArms(c);
@@ -3125,11 +3471,11 @@ SCENES.bakery=function(){
   function* trayRun(c,j){
     const px=panX(OV.mx);
     if(j==='pull'){yield*walkTo(c,1525,1);yield*door('L',true);c.bendT=.5;both(c,1608,OV.ly-4,22);yield*sleep(.65);
-      const tr={n:OVEN.tray.n,bake:1,glaze:0,sugar:0};OVEN.tray=null;c.carry=carryTray(tr);SFX.trayRack(px);for(let k=0;k<5;k++)puff(1610,OV.ly-20,{spread:14,a:.12});c.bendT=0;carryPose(c);yield*sleep(.6);yield*door('L',false);
+      const tr={n:OVEN.tray.n,bake:1,glaze:0,sugar:0};OVEN.tray=null;c.carry=carryTray(tr,c);SFX.trayRack(px);for(let k=0;k<5;k++)puff(1610,OV.ly-20,{spread:14,a:.12});c.bendT=0;trayPose(c);yield*sleep(.6);yield*door('L',false);
       yield*walkTo(c,195,1);c.leanT=12;both(c,F.cx,CT-12,60);yield*sleep(.6);F.tray=tr;c.carry=null;SFX.panSet(panX(F.cx));restArms(c);yield*sleep(.3);}
-    else if(j==='load'){yield*walkTo(c,PT.cx-78,1);c.leanT=10;both(c,PT.cx,CT-12,60);yield*sleep(.55);const tr={n:PT.n,bake:0};PT.here=false;PT.n=0;c.carry=carryTray(tr);c.leanT=0;carryPose(c);yield*sleep(.4);
+    else if(j==='load'){yield*walkTo(c,PT.cx-78,1);c.leanT=10;both(c,PT.cx,CT-12,60);yield*sleep(.55);const tr={n:PT.n,bake:0};PT.here=false;PT.n=0;c.carry=carryTray(tr,c);c.leanT=0;trayPose(c);yield*sleep(.4);
       yield*walkTo(c,1525,1);yield*door('L',true);c.bendT=.5;both(c,1608,OV.ly-4,22);yield*sleep(.65);c.carry=null;OVEN.tray={t:0,n:tr.n};SFX.trayRack(px);c.bendT=0;restArms(c);yield*sleep(.5);yield*door('L',false);}
-    else if(j==='empty'){c.errand=true;yield*walkTo(c,FT.x-70,1,false,FRONT_Y);yield*bendTo(c,FT.x,FY-FT.n*7-12);FT.n--;c.carry=carryTray(null);SFX.tink(panX(FT.x));carryPose(c);yield*rise(c);
+    else if(j==='empty'){c.errand=true;yield*walkTo(c,FT.x-70,1,false,FRONT_Y);yield*bendTo(c,FT.x,FY-FT.n*7-12);FT.n--;c.carry=carryTray(null,c);SFX.tink(panX(FT.x));trayPose(c);yield*rise(c);
       yield*walkTo(c,PT.cx-78,1);c.leanT=10;both(c,PT.cx,CT-12,60);yield*sleep(.55);PT.here=true;PT.n=0;c.carry=null;SFX.panSet(panX(PT.cx));restArms(c);c.errand=false;yield*sleep(.3);}
   }
   /* The 15 bakery tasks. */
@@ -3171,6 +3517,7 @@ SCENES.bakery=function(){
   function* life(c){
     yield*sleep(R(0,1.5));
     for(;;){
+      {const X=WARM.next(c);if(X){yield*WARM.run(c,X);continue;}}
       const T_=pickTask(c);if(!T_){yield*idle(c);continue;}
       if(c.at&&c.at!==T_.st)locks[c.at]=null;
       locks[T_.st]=c;c.at=T_.st;c.task=T_;recent.push(T_.id);if(recent.length>5)recent.shift();
@@ -3180,7 +3527,7 @@ SCENES.bakery=function(){
       if(BD.holder===c)BD.holder=null;if(PEEL.holder===c)PEEL.holder=null;
       c.task=null;c.last=T_.id;yield*sleep(.3);
       if(c.at==='chop'&&!BD.holder&&R()<.12&&Math.abs(c.x-ST.chop.x)<6){c.face=ST.chop.face;yield*honeKnife(c,BD,takeKnife,putKnife);}
-      const r=R();if(r<.16&&Math.abs(c.y-WORK_Y)<4)yield*dustHands(c);else if(r<.38)yield*chat(c,cooks);else if(r<.74)yield*idle(c);        // clap the flour off
+      const r=WARM.rush?1:R();if(r<.16&&Math.abs(c.y-WORK_Y)<4)yield*dustHands(c);else if(r<.38)yield*chat(c,cooks);else if(r<.74)yield*idle(c);        // clap the flour off
     }
   }
   for(const c of cooks){c.x=ST[c.at].x;c.face=c.fa=ST[c.at].face;locks[c.at]=c;c.s=c.A.h;c.script=life(c);}
@@ -3193,7 +3540,7 @@ SCENES.bakery=function(){
     if(DONE.length){yield*walkTo(c,632-70,1,false,FRONT_Y);yield*bendTo(c,632,FY-40);c.carry={kind:'tubs',cols:DONE.splice(0).slice(-3)};SFX.tick(panX(632));carryPose(c);yield*rise(c);}
     yield*walkTo(c,-150,-1,true);c.carry=null;c.task=null;}
   function* runTrays(c){c.task={id:'restock trays'};c.x=2070;c.y=c.lane;c.face=c.fa=-1;const n=6-FT.n;
-    c.carry={draw:(g,x,y)=>{for(let i=0;i<n;i++)trayShape(g,x,y+8-i*7);}};carryPose(c);yield*walkTo(c,FT.x+70,-1,false,FRONT_Y);yield*bendTo(c,FT.x,FY-FT.n*7-24);FT.n+=n;c.carry=null;SFX.panSet(panX(FT.x));yield*rise(c);restArms(c);
+    c.carry={draw:(g,x,y,s)=>{for(let i=0;i<n;i++)trayShape(g,x+(c.fa<0?-1:1)*18*s,y-29*s-i*7);}};trayPose(c);yield*walkTo(c,FT.x+70,-1,false,FRONT_Y);yield*bendTo(c,FT.x,FY-FT.n*7-24);FT.n+=n;c.carry=null;SFX.panSet(panX(FT.x));yield*rise(c);restArms(c);
     yield*walkTo(c,2070,1,true);c.task=null;}
   function* runRack(c){c.task={id:'swap the rack'};c.x=-150;c.y=c.lane;c.face=c.fa=1;RACK.busy=true;
     yield*walkTo(c,RACK.x+118,-1);c.leanT=10;c.nT=[58,-290];c.fT=[52,-250];yield*sleep(.5);
@@ -3205,18 +3552,24 @@ SCENES.bakery=function(){
     const n=SHELF.n;c.leanT=8;both(c,1880,640,30);yield*sleep(.8);SHELF.n=0;c.carry={draw:(g,x,y)=>{g.fillStyle='#a9784e';rr(g,x-40,y-14,80,22,5);g.fill();for(let i=0;i<Math.min(4,n);i++)loafShape(g,x-27+i*18,y-10,.7,1,true);}};
     c.leanT=0;carryPose(c);yield*sleep(.5);yield*walkTo(c,2070,1,true);c.carry=null;c.task=null;}
   function* runnerLife(c){c.x=-150;c.y=c.lane;yield*sleep(R(6,12));
-    for(;;){const prep=STOCK.nuts+STOCK.choc+STOCK.dough+STOCK.pastry;
+    for(;;){while(WARM.meal)yield;const prep=STOCK.nuts+STOCK.choc+STOCK.dough+STOCK.pastry;
       if(RACK.n>=6&&!RACK.busy&&!F.tray)yield*runRack(c);else if(prep<=5||DONE.length>=4)yield*runPrep(c);else if(FT.n<=2)yield*runTrays(c);else if(SHELF.n>=4&&!PEEL.holder)yield*runBread(c);else{yield*sleep(.5);continue;}
       yield*sleep(R(2,5));}}
   runner.s=runner.A.h;runner.script=runnerLife(runner);cooks.push(runner);
   const YOU=mkYou({frontY:FRONT_Y,cupKind:'cocoa',cupCol:'#b5543c',liq:'#6a3a22',treatKind:'croissant',mat:'#efe6d2'});
   const host=mkCook({lane:944,A:look({jacket:'#b97a6a',apron:'#f1ece0',bib:1,head:'bun',headCol:'#efe6d2',hair:'#d9d3c6',skin:'#e6b48e',pants:'#3a3440',h:.94})});
-  host.s=host.A.h;host.script=hostLife(host,{YOU,cooks,enter:2090,pot:'pot'});cooks.push(host);
+  const ENV={YOU,cooks,host,puff,enter:2090,pot:'pot',call:'pot',passPan:.5,win:WIN,cat:true,catFront:[1500,952],catCol:'#c98a4a',
+    food:{kind:'plate',col:'#efe6d2',rim:'#e1d6bc',food:['#d9a052','#b97a34','#e6cf8a'],tool:null},
+    visitor:look({jacket:'#7a5a8a',apron:'#5f456d',head:'cap',headCol:'#3a2f4a',hair:'#2a1d18',skin:'#e2b28c',pants:'#33303a',h:1.02}),
+    heat:()=>[{x:1746,y:OV.uy,w:120,k:.55+.45*OVEN.dU,smoke:.25,glow:1},{x:1746,y:OV.ly,w:120,k:.55+.45*OVEN.dL,smoke:.25,glow:1},
+      F.tray&&F.tray.glaze<1&&{x:F.cx,y:CT-22,w:90,k:.6,smoke:.7,glow:0}].filter(Boolean)};
+  host.s=host.A.h;host.script=hostLife(host,ENV);cooks.push(host);
+  const WARM=mkWarm(ENV);
 
   /* ── per-frame update ── */
   const bgSfx={tink:R(6,16),dish:R(14,34),lid:R(20,40),wind:2};let aud=null;
   function update(dt,t){
-    for(const c of cooks){c.script.next(dt);stepCook(c,dt);}stepYou(YOU,dt,puff);
+    for(const c of cooks){c.script.next(dt);stepCook(c,dt);}WARM.step(dt,t);
     for(const l of OVEN.loaves)l.t+=dt;if(OVEN.tray)OVEN.tray.t+=dt;BOWL.froth=Math.max(.15,BOWL.froth-dt*.004);
     for(let i=BD.fly.length-1;i>=0;i--){const q=BD.fly[i];if((q.t+=dt)>=q.d)BD.fly.splice(i,1);}
     for(let i=sugar.length-1;i>=0;i--){const q=sugar[i];q.y+=q.vy*dt;if(q.y>q.end)sugar.splice(i,1);}
@@ -3231,12 +3584,13 @@ SCENES.bakery=function(){
     if((bgSfx.wind-=dt)<0){bgSfx.wind=R(3,7);if(aud){aud.wind.gain.gain.setTargetAtTime(R(.12,.4),ac.currentTime,2);aud.whis.gain.gain.setTargetAtTime(R(0,.04),ac.currentTime,2.5);}}
   }
   function draw(g,t,cam){
-    g.drawImage(bgC,0,0);drawWindow(g,t);drawLights(g,866,1214,342,t,8);drawCat(g,470,488,t);drawRadio(g,610,488,t,{body:'#6a4a34'});drawClock(g,1236,130,190,{body:'#3a2a22',face:'#120e0c',on:'#ffd9a0',off:'rgba(255,217,160,.06)',glow:9});
+    g.drawImage(bgC,0,0);drawWindow(g,t);drawLights(g,866,1214,342,t,8);WARM.catShelf(g,t,470,488,'#c98a4a');drawRadio(g,610,488,t,{body:'#6a4a34'});drawClock(g,1236,130,190,{body:'#3a2a22',face:'#120e0c',on:'#ffd9a0',off:'rgba(255,217,160,.06)',glow:9});
     g.drawImage(ovC,1610,170,250,680,1610,170,250,680);drawRack(g);drawBench(g,t);
     const order=cooks.slice().sort((a,b)=>a.y-b.y);
-    for(const c of order)if(c.x<1650)drawCook(g,c,t);
+    const atOven=c=>c.x<1650&&c.y<WORK_Y+30;           // only someone working at the oven mouth is behind its front; anyone walking past is in front of it
+    for(const c of order)if(atOven(c))drawCook(g,c,t);
     drawOvenFront(g,t);
-    for(const c of order)if(c.x>=1650)drawCook(g,c,t);
+    for(const c of order)if(!atOven(c))drawCook(g,c,t);
     g.fillStyle='rgba(255,255,255,.9)';for(const q of sugar)g.fillRect(q.x,q.y,2,2.4);
     for(const p of steam){const k=p.life/p.max,r=p.r*(1+k*1.7);g.globalAlpha=p.a*Math.sin(Math.PI*k);g.drawImage(puffC,p.x-r,p.y-r,r*2,r*2);}
     g.globalAlpha=1;g.globalCompositeOperation='lighter';
@@ -3244,7 +3598,7 @@ SCENES.bakery=function(){
     const fl=1+.05*Math.sin(t*4.7)+.03*Math.sin(t*11.3);
     g.globalAlpha=.16*fl;g.drawImage(glowC,1620-520,640-520,1040,1040);g.globalAlpha=.16;g.drawImage(glowC,935-360,220-360,720,720);
     g.globalAlpha=1;g.globalCompositeOperation='source-over';
-    g.drawImage(fgC,0,880,W,200,-30,880,W+60,200);drawStock(g);drawYou(g,YOU,t);
+    WARM.air(g,t);g.drawImage(fgC,0,880,W,200,-30,880,W+60,200);drawStock(g);WARM.front(g,t);
     g.drawImage(vigC,-30,-20,W+60,H+40);
   }
   function startAudio(){
@@ -3264,14 +3618,17 @@ SCENES.bakery=function(){
     {root:'D4',ch:[{n:['F#3','A3','C#4','E4'],b:'D2'},{n:['A3','C#4','D4','F#4'],b:'B1'},{n:['B3','D4','F#4','A4'],b:'G1'},{n:['G3','B3','D4','E4'],b:'A1'}]},
   ]};
   const otherSounds='Dough slapping on the bench, the bench scraper, the rolling pin, loaf scoring, the peel, the oven door, trays sliding onto the rack, the glaze brush, powdered sugar, and dish clatter from the back sink.';
-  return{id:'bakery',otherSounds,update,draw,startAudio,stopAudio,music,_dbg:{cooks,TASKS,recent,DOUGH,T,PT,SHEET,OVEN,SHELF,RACK,F,BOWL,STOCK,DONE,FT,BD}};
+  return{id:'bakery',otherSounds,update,draw,startAudio,stopAudio,music,_dbg:{WARM,YOU,cooks,TASKS,recent,DOUGH,T,PT,SHEET,OVEN,SHELF,RACK,F,BOWL,STOCK,DONE,FT,BD}};
 };
 
 /* ───────────────────────── 6. APP SHELL ───────────────────────── */
 const cv=document.getElementById('cv'),g=cv.getContext('2d');
 const $=id=>document.getElementById(id);
-let scene=SCENES.ramen(),sceneId='ramen',chosen='ramen',started=false,switching=false;
-let T=0,last=performance.now(),fade=0,fadeT=0;
+let T=0;
+/* a kitchen is run ahead in silence for half a minute before it is shown, so everyone is already at work when the fade lifts */
+function makeScene(id){const s=SCENES[id]();PRE=true;try{for(let i=0;i<1000;i++)s.update(1/30,T+i/30);}finally{PRE=false;}return s;}
+let scene=makeScene('ramen'),sceneId='ramen',chosen='ramen',started=false,switching=false;
+let last=performance.now(),fade=0,fadeT=0;
 function fit(){const s=Math.min(innerWidth/W,innerHeight/H);cv.style.width=Math.floor(W*s)+'px';cv.style.height=Math.floor(H*s)+'px';}
 addEventListener('resize',fit);fit();
 function tickFrame(dt){
@@ -3286,12 +3643,13 @@ function tickFrame(dt){
 }
 function frame(now){const dt=Math.min(.05,(now-last)/1000);last=now;tickFrame(dt);requestAnimationFrame(frame);}
 requestAnimationFrame(frame);
-window.__kitchen={ff(sec,step=1/30){for(let t=0;t<sec;t+=step)tickFrame(step);},sim(sec,step=1/30){for(let t=0;t<sec;t+=step){T+=step;scene.update(step,T);}},load(id){scene=SCENES[id]();sceneId=id;},get scene(){return scene;}};
+window.__kitchen={ff(sec,step=1/30){for(let t=0;t<sec;t+=step)tickFrame(step);},sim(sec,step=1/30){for(let t=0;t<sec;t+=step){T+=step;scene.update(step,T);}},load(id){scene=makeScene(id);sceneId=id;},get scene(){return scene;}};
 
 function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('on');clearTimeout(toast.id);toast.id=setTimeout(()=>t.classList.remove('on'),2200);}
 let level=0,muted=false;
+const syncRadio=()=>{radioOn=!started||(!muted&&+document.querySelector('[data-bus="music"]').value>0);};      // no notes drift out of the radio while the music is muted or turned right down
 function ramp(v,sec){level=v;A.master.gain.cancelScheduledValues(ac.currentTime);A.master.gain.setTargetAtTime(muted?0:v,ac.currentTime,sec/3);}
-function toggleMute(){if(!started)return;muted=!muted;ramp(level,.25);const b=$('muteBtn');b.textContent=muted?'Unmute (M)':'Mute (M)';b.setAttribute('aria-pressed',muted);}
+function toggleMute(){if(!started)return;muted=!muted;ramp(level,.25);const b=$('muteBtn');b.textContent=muted?'Unmute (M)':'Mute (M)';b.setAttribute('aria-pressed',muted);syncRadio();}
 function startSceneAudio(){
   scene.startAudio();
   try{Music.start(scene.music);}catch(e){console.warn('Music failed to start',e);toast('The music couldn’t start; kitchen sounds are still on.');}
@@ -3303,9 +3661,9 @@ async function begin(){
   try{
     if(!A.ready){await Tone.start();initAudio(Tone.getContext().rawContext);}
     clearTimeout(goHome.id);if(homeAudio){scene.stopAudio();Music.stop();homeAudio=false;}
-    if(chosen!==sceneId||wasHome){scene=SCENES[chosen]();sceneId=chosen;wasHome=false;}
+    if(chosen!==sceneId||wasHome){scene=makeScene(chosen);sceneId=chosen;wasHome=false;}
     startSceneAudio();ramp(1,2.5);
-    started=true;b.disabled=false;$('start').hidden=true;$('mixer').hidden=false;
+    started=true;syncRadio();b.disabled=false;$('start').hidden=true;$('mixer').hidden=false;
   }catch(e){console.error(e);b.disabled=false;toast('Sound couldn’t start: '+e.message);}
 }
 /* slow crossfade of picture and sound */
@@ -3314,13 +3672,13 @@ function switchScene(id){
   if(!started){chosen=id;return;}
   if(id===sceneId||switching)return;
   switching=true;fadeT=1;ramp(0,2.2);
-  setTimeout(()=>{scene.stopAudio();Music.stop();scene=SCENES[id]();sceneId=id;startSceneAudio();fadeT=0;ramp(1,2.5);switching=false;},2600);
+  setTimeout(()=>{scene.stopAudio();Music.stop();scene=makeScene(id);sceneId=id;startSceneAudio();fadeT=0;ramp(1,2.5);switching=false;},2600);
 }
 /* back to the start screen to pick another kitchen */
 let homeAudio=false,wasHome=false;
 function goHome(){
   if(!started||switching)return;
-  started=false;homeAudio=true;wasHome=true;ramp(0,.8);
+  started=false;syncRadio();homeAudio=true;wasHome=true;ramp(0,.8);
   goHome.id=setTimeout(()=>{if(homeAudio){scene.stopAudio();Music.stop();homeAudio=false;}},1200);
   document.body.classList.remove('clean');$('mixer').hidden=true;$('start').hidden=false;chosen=sceneId;
   document.querySelectorAll('.ticket').forEach(o=>o.setAttribute('aria-pressed',o.dataset.scene===sceneId));
@@ -3333,9 +3691,9 @@ $('muteBtn').addEventListener('click',toggleMute);
 $('homeBtn').addEventListener('click',goHome);
 $('fsBtn').addEventListener('click',fullscreen);
 $('stage').addEventListener('dblclick',()=>document.body.classList.remove('clean'));
-document.querySelectorAll('.ticket').forEach(b=>b.addEventListener('click',()=>{chosen=b.dataset.scene;if(!started&&SCENES[chosen]&&chosen!==sceneId){scene=SCENES[chosen]();sceneId=chosen;}   // preview the chosen kitchen behind the start screen
+document.querySelectorAll('.ticket').forEach(b=>b.addEventListener('click',()=>{chosen=b.dataset.scene;if(!started&&SCENES[chosen]&&chosen!==sceneId){scene=makeScene(chosen);sceneId=chosen;}   // preview the chosen kitchen behind the start screen
   document.querySelectorAll('.ticket').forEach(o=>o.setAttribute('aria-pressed',o===b));}));
-document.querySelectorAll('#mixer input[data-bus]').forEach(i=>i.addEventListener('input',()=>{if(A.ready)A.bus[i.dataset.bus].gain.setTargetAtTime(sliderGain(+i.value,i.dataset.bus),ac.currentTime,.05);}));
+document.querySelectorAll('#mixer input[data-bus]').forEach(i=>i.addEventListener('input',()=>{if(A.ready)A.bus[i.dataset.bus].gain.setTargetAtTime(sliderGain(+i.value,i.dataset.bus),ac.currentTime,.05);syncRadio();}));
 $('bassEq').addEventListener('input',e=>{if(A.ready)A.bass.gain.setTargetAtTime((+e.target.value-50)*.3,ac.currentTime,.05);});
 /* what "other kitchen sounds" means in this kitchen: hover, focus, or long-press */
 {const lbl=$('otherLbl'),tip=$('tip');let hold;
