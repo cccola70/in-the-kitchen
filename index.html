@@ -64,14 +64,17 @@ kbd{display:inline-block;font:inherit;font-weight:700;font-size:.78rem;line-heig
 button:focus-visible,input:focus-visible{outline:3px solid #fff;outline-offset:3px}
 
 /* ── mixer ── */
-#mixer{position:fixed;left:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));width:260px;max-width:calc(100% - 32px);
+#mixer{position:fixed;left:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));width:440px;max-width:calc(100% - 32px);
   background:rgba(14,15,24,.86);border:1px solid rgba(239,230,210,.16);border-radius:4px;padding:12px 14px 12px;font-size:.82rem}
 #mixer[hidden]{display:none}
-#mixer label{display:grid;grid-template-columns:1fr 104px;align-items:center;gap:10px;margin:3px 0}
+#mixer .sliders{display:grid;grid-template-columns:1fr 1fr;gap:9px 20px}
+#mixer label{display:grid;gap:3px;line-height:1.2}
+#mixer label.main{color:var(--lantern)}
+@media (max-width:520px){#mixer .sliders{grid-template-columns:1fr;gap:6px}#mixer label{grid-template-columns:1fr 46%;align-items:center;gap:10px}}
 #mixer input[type=range]{width:100%;accent-color:var(--lantern);height:18px;margin:0}
-#mixer .row{display:flex;gap:8px;margin-top:8px}
+#mixer .row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
 #muteBtn[aria-pressed="true"]{background:var(--lantern)!important;color:var(--ink)!important;border-color:var(--lantern)!important}
-#mixer button{font:inherit;flex:1;color:var(--paper);background:transparent;border:1px solid rgba(239,230,210,.3);border-radius:3px;padding:6px 4px;cursor:pointer}
+#mixer button{font:inherit;flex:1 1 90px;white-space:nowrap;color:var(--paper);background:transparent;border:1px solid rgba(239,230,210,.3);border-radius:3px;padding:6px 4px;cursor:pointer}
 #otherLbl{cursor:help}#otherLbl .info{opacity:.7}
 #tip{position:absolute;left:0;right:0;bottom:calc(100% + 8px);background:var(--paper);color:var(--ink);padding:10px 12px;border-radius:3px;font-size:.8rem;line-height:1.4;box-shadow:0 8px 20px rgba(0,0,0,.4)}
 #tip[hidden]{display:none}
@@ -109,16 +112,18 @@ button:focus-visible,input:focus-visible{outline:3px solid #fff;outline-offset:3
 </section>
 
 <aside id="mixer" hidden aria-label="Sound mixer">
-  <label>Music<input type="range" min="0" max="100" value="70" data-bus="music"></label>
-  <label>Music bass<input type="range" min="0" max="100" value="50" id="bassEq"></label>
-  <label>Ambient bed<input type="range" min="0" max="100" value="70" data-bus="bed"></label>
-  <label>Chopping<input type="range" min="0" max="100" value="70" data-bus="chop"></label>
-  <label>Pots and utensils<input type="range" min="0" max="100" value="70" data-bus="pots"></label>
-  <label id="otherLbl" tabindex="0" aria-describedby="tip"><span>Other kitchen sounds <span class="info" aria-hidden="true">ⓘ</span></span><input type="range" min="0" max="100" value="70" data-bus="other"></label>
+  <div class="sliders">
+    <label class="main">Master volume<input type="range" min="0" max="100" value="100" id="masterVol"></label>
+    <label>Music<input type="range" min="0" max="100" value="70" data-bus="music"></label>
+    <label>Music bass<input type="range" min="0" max="100" value="50" id="bassEq"></label>
+    <label>Ambient bed<input type="range" min="0" max="100" value="70" data-bus="bed"></label>
+    <label>Chopping<input type="range" min="0" max="100" value="70" data-bus="chop"></label>
+    <label>Pots and utensils<input type="range" min="0" max="100" value="70" data-bus="pots"></label>
+    <label id="otherLbl" tabindex="0" aria-describedby="tip"><span>Other kitchen sounds <span class="info" aria-hidden="true">ⓘ</span></span><input type="range" min="0" max="100" value="70" data-bus="other"></label>
+    <label>Chatter<input type="range" min="0" max="100" value="70" data-bus="chatter"></label>
+  </div>
   <div id="tip" role="tooltip" hidden></div>
-  <label>Chatter<input type="range" min="0" max="100" value="70" data-bus="chatter"></label>
-  <div class="row"><button id="muteBtn" aria-pressed="false">Mute (M)</button><button id="homeBtn">Home</button></div>
-  <div class="row"><button id="hideBtn">Hide (H)</button><button id="fsBtn">Fullscreen (F)</button></div>
+  <div class="row"><button id="muteBtn" aria-pressed="false">Mute (M)</button><button id="homeBtn">Home</button><button id="hideBtn">Hide (H)</button><button id="fsBtn">Fullscreen (F)</button></div>
 </aside>
 <div id="toast" role="status"></div>
 
@@ -165,11 +170,12 @@ const noteHz=n=>{const m=/^([A-G])([#b]?)(-?\d)$/.exec(n);if(!m)return 220;const
 /* ───────────────────────── 2. AUDIO ENGINE ─────────────────────────
    Everything except the music is built from raw Web Audio nodes on Tone's
    context: filtered noise bursts, short oscillators, and a few pre-rendered
-   loops.  Six buses match the six mixer sliders. */
+   loops.  Six buses match the six mixer sliders; Master volume sits after them all. */
 const A={ready:false,bus:{}};
 let ac=null;
 const BUSES=['music','bed','chop','pots','other','chatter'];
 const TRIM={music:1.73,bed:.38,chop:.55,pots:.75,other:.62,chatter:.5};
+const masterGain=v=>Math.pow(v/100,1.7)*.85;      // the Master volume slider: everything, after the limiter
 const sliderGain=(v,bus)=>Math.pow(v/100,1.7)*1.6*(TRIM[bus]||1);
 
 function initAudio(ctx){
@@ -178,7 +184,7 @@ function initAudio(ctx){
   const comp=ac.createDynamicsCompressor();
   comp.threshold.value=-16;comp.knee.value=12;comp.ratio.value=2.5;comp.attack.value=.02;comp.release.value=.3;
   const lim=ac.createDynamicsCompressor(),outG=ac.createGain();
-  lim.threshold.value=-3;lim.knee.value=0;lim.ratio.value=20;lim.attack.value=.002;lim.release.value=.1;outG.gain.value=.85;
+  lim.threshold.value=-3;lim.knee.value=0;lim.ratio.value=20;lim.attack.value=.002;lim.release.value=.1;outG.gain.value=masterGain(+document.getElementById('masterVol').value);A.out=outG;
   A.master.connect(comp);comp.connect(lim);lim.connect(outG);outG.connect(ac.destination);
   // small-room reverb so the one-shots sit in a tiled kitchen
   A.rev=ac.createConvolver();A.rev.buffer=impulse(1.3);
@@ -439,7 +445,7 @@ const Music={
     M.hat.volume.value=-14;M.hat.chain(M.hatF,M.lpD);
     // vinyl: hiss plus sparse clicks, pre-rendered
     M.crackleBuf=renderLoop(11,9,(d,p,n)=>{const a=Math.pow(Math.random(),3)*.5,len=RI(2,7);
-      for(let k=0;k<len;k++)d[(p+k)%n]+=(Math.random()*2-1)*a*(1-k/len);},.012);
+      for(let k=0;k<len;k++)d[(p+k)%n]+=(Math.random()*2-1)*a*(1-k/len);},.003);     // sparse record clicks over only a trace of hiss
     M.built=true;
   },
   start(cfg){
@@ -3647,7 +3653,7 @@ window.__kitchen={ff(sec,step=1/30){for(let t=0;t<sec;t+=step)tickFrame(step);},
 
 function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('on');clearTimeout(toast.id);toast.id=setTimeout(()=>t.classList.remove('on'),2200);}
 let level=0,muted=false;
-const syncRadio=()=>{radioOn=!started||(!muted&&+document.querySelector('[data-bus="music"]').value>0);};      // no notes drift out of the radio while the music is muted or turned right down
+const syncRadio=()=>{radioOn=!started||(!muted&&+$('masterVol').value>0&&+document.querySelector('[data-bus="music"]').value>0);};      // no notes drift out of the radio while the music is muted or turned right down
 function ramp(v,sec){level=v;A.master.gain.cancelScheduledValues(ac.currentTime);A.master.gain.setTargetAtTime(muted?0:v,ac.currentTime,sec/3);}
 function toggleMute(){if(!started)return;muted=!muted;ramp(level,.25);const b=$('muteBtn');b.textContent=muted?'Unmute (M)':'Mute (M)';b.setAttribute('aria-pressed',muted);syncRadio();}
 function startSceneAudio(){
@@ -3694,6 +3700,7 @@ $('stage').addEventListener('dblclick',()=>document.body.classList.remove('clean
 document.querySelectorAll('.ticket').forEach(b=>b.addEventListener('click',()=>{chosen=b.dataset.scene;if(!started&&SCENES[chosen]&&chosen!==sceneId){scene=makeScene(chosen);sceneId=chosen;}   // preview the chosen kitchen behind the start screen
   document.querySelectorAll('.ticket').forEach(o=>o.setAttribute('aria-pressed',o===b));}));
 document.querySelectorAll('#mixer input[data-bus]').forEach(i=>i.addEventListener('input',()=>{if(A.ready)A.bus[i.dataset.bus].gain.setTargetAtTime(sliderGain(+i.value,i.dataset.bus),ac.currentTime,.05);syncRadio();}));
+$('masterVol').addEventListener('input',e=>{if(A.ready)A.out.gain.setTargetAtTime(masterGain(+e.target.value),ac.currentTime,.05);syncRadio();});
 $('bassEq').addEventListener('input',e=>{if(A.ready)A.bass.gain.setTargetAtTime((+e.target.value-50)*.3,ac.currentTime,.05);});
 /* what "other kitchen sounds" means in this kitchen: hover, focus, or long-press */
 {const lbl=$('otherLbl'),tip=$('tip');let hold;
