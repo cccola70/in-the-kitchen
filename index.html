@@ -340,6 +340,7 @@ const SND={
     for(const n of line){osc.frequency.setTargetAtTime(n.f*k,t,.035);g.gain.setTargetAtTime(.2,t,.05);g.gain.setTargetAtTime(.11,t+n.d*.6,.09);t+=n.d;}
     g.gain.setTargetAtTime(0,t,.12);osc.start(t0);vib.start(t0);osc.stop(t+.7);vib.stop(t+.7);
   },
+  chirp(pan){const t=now(),o=ev(pan,'other',R(.6,1));for(let i=0,n=RI(1,3);i<n;i++)tn(o,t+i*R(.09,.13),.05,R(3000,3500),{g:.022,f2:R(3900,4600)});},     // a small peep from the birds outside, through the glass
   /* close to the viewer: dry, soft, and a little fuller than the sounds from across the room */
   cupUp(){const t=now(),o=ev(.06,'other',.8);nz(o,t,.09,1100,{q:1,g:.06,a:.03});},
   cupDown(){const t=now(),o=ev(.06,'other',1);tn(o,t,.07,210,{g:.2,f2:150});nz(o,t,.05,520,{q:1.4,g:.16});ring(o,t,R(1500,1800),[1,2.4],.07,.035);},
@@ -408,69 +409,124 @@ function startChatter({voices=6,level=1,density=.6,call=[20,45],laugh=[40,100],w
 }
 
 /* ───────────────────────── 3. MUSIC ENGINE (Tone.js) ─────────────────────────
-   One generator, steered by a scene config:
-     { bpm, swing, progs:[{root, ch:[{n:[notes], b:bassNote} x4]}], bell?, walk? }
-   Sections of 16–24 bars each use one progression; every 4-bar phrase re-rolls
-   the comping style, drum variation and melody motif, so nothing loops exactly. */
+   One generator, four different bands.  A scene config names its band and gives the harmony:
+     { band, bpm, swing, scale?, progs:[{root, ch:[{n:[notes], b:bassNote} x4]}] }
+   BANDS says what each room's band is made of (the tone of the keys, lead and bass, the drum kit and how it is
+   played, how the chords are comped, how the bass moves) so the four rooms do not sound like one tape.
+   So that an hour in does not sound like minute five, every section of 12 to 24 bars picks a progression it has
+   not used lately, moves to a new key, drifts the tempo and swing a little, and takes one of several arrangements
+   (full band, no lead, no drums, a duo, arpeggios, lead up high).  Every 4-bar phrase then re-rolls the comping,
+   the chord voicing, the drum variation and the melody. */
+const BANDS={
+  /* rainy night: dark electric piano with a slow tremolo, a plucked koto-like lead with long echoes, a deep round bass,
+     and a slow half-time beat with a rim click on three */
+  ramen:{keys:{partials:[1,.35,.1,.04],env:{attack:.012,decay:6,sustain:.3,release:4},vol:-10,trem:[3,.26]},
+    lead:{partials:[1,.6,.35,.2,.1],env:{attack:.003,decay:.5,sustain:0,release:.6},vol:-10.5,port:0,dly:.3,lp:3200,grace:.3},
+    bass:{type:'sine',env:{attack:.02,decay:.3,sustain:.85,release:.5},vol:-13.5,fb:80,fo:1.6},out:.9,
+    kick:-10,snare:{f:1900,q:2.4,decay:.05,vol:-12},hat:{f:5200,decay:.03,vol:-17},lp:[1400,2300],wob:.15,
+    drum:'half',bassStyle:'long',comps:[0,0,1,3],kicks:[[0,10],[0,7],[0,11],[0],[0,10,14]],
+    arr:{full:3,noLead:2,noDrums:3,duo:2,high:1},leads:{motif:3,long:2,rest:1.5}},
+  /* sunny morning: a bright upright piano stabbing the backbeat, a vibraphone lead, a bouncing root-and-fifth bass,
+     and a shuffling kit with claps and a steady hat */
+  diner:{keys:{partials:[1,.7,.45,.3,.18,.1],env:{attack:.004,decay:1.5,sustain:.08,release:.8},vol:-8.5,trem:[2,.04]},
+    lead:{partials:[1,0,0,.28,0,0,.05],env:{attack:.002,decay:1.3,sustain:0,release:1.3},vol:-9.5,port:0,dly:.12,lp:5000,trill:.2},
+    bass:{type:'triangle',env:{attack:.008,decay:.2,sustain:.5,release:.2},vol:-12.5,fb:100,fo:2.6},out:1.6,
+    kick:-11.5,snare:{f:1700,q:.9,decay:.09,vol:-10},hat:{f:6600,decay:.035,vol:-14.5},lp:[3000,4400],wob:.06,
+    drum:'shuffle',bassStyle:'two',comps:[4,4,4,2,8],kicks:[[],[7],[10],[11],[7,14]],
+    arr:{full:4,noLead:2,noDrums:1.5,arp:1.5,high:1.5},leads:{motif:4,long:1,rest:1}},
+  /* busy evening: nylon guitar four to the bar, a clarinet lead, a walking upright bass, ride cymbal and brushes */
+  bistro:{keys:{partials:[1,.5,.33,.2,.12,.06],env:{attack:.002,decay:.85,sustain:0,release:.5},vol:-8,trem:[2,.03]},
+    lead:{partials:[1,0,.36,0,.2,0,.1,0,.05],env:{attack:.07,decay:.3,sustain:.75,release:.3},vol:-13.5,port:.03,dly:.08,lp:1700},
+    bass:{type:'triangle',env:{attack:.005,decay:.2,sustain:.4,release:.25},vol:-11.5,fb:95,fo:2.8},out:1.3,
+    kick:-14,snare:{f:2300,q:.5,decay:.2,vol:-13.5},hat:{f:7600,decay:.12,vol:-16.5},lp:[2400,3400],wob:.08,
+    drum:'ride',bassStyle:'walk',comps:[5,5,6,6,2],kicks:[[]],
+    arr:{full:4,noLead:2,noDrums:1.5,duo:1.5,high:1},leads:{motif:3,long:2,rest:1.5}},
+  /* snowy pre-dawn: a slow warm pad, a music-box lead playing arpeggios, a soft whole-note bass,
+     hardly any drums, and bell accents */
+  bakery:{keys:{partials:[1,.4,.12],env:{attack:.45,decay:2,sustain:.8,release:3.6},vol:-15,trem:[1.2,.1]},
+    lead:{partials:[1,0,.3,0,.08],env:{attack:.002,decay:.9,sustain:0,release:1.3},vol:-10.5,port:0,dly:.3,lp:5200,up:12},
+    bass:{type:'sine',env:{attack:.04,decay:.4,sustain:.8,release:.8},vol:-15,fb:80,fo:1.4},out:.85,
+    kick:-13,snare:{f:2600,q:1.4,decay:.04,vol:-17},hat:{f:7200,decay:.025,vol:-19},lp:[1900,2900],wob:.1,
+    drum:'soft',bassStyle:'whole',comps:[7,7,7,3],kicks:[[]],
+    arr:{full:3,noLead:1.5,noDrums:3,arp:3,high:1},leads:{arp:3,motif:2,long:1.5,rest:1}}
+};
 const Music={
-  built:false,on:false,
+  built:false,on:false,bandId:null,
   build(){
     const T=Tone,M=this;
     M.out=new T.Gain(1);
     M.wob=new T.Vibrato({frequency:.45,depth:.11,maxDelay:.01});          // gentle tape wobble
-    M.lpT=new T.Filter(2400,'lowpass');M.lpD=new T.Filter(5000,'lowpass'); // warm, but not buried
+    M.lpT=new T.Filter(2400,'lowpass');M.lpD=new T.Filter(5000,'lowpass'); // tone filter for the band, a brighter one for the kit
     M.lfo=new T.LFO({frequency:.03,min:1900,max:3000}).start();M.lfo.connect(M.lpT.frequency);
     M.lpT.connect(M.wob);M.lpD.connect(M.wob);M.wob.connect(M.out);
     T.connect(M.out,A.bus.music);
-    /* electric piano: a mellow additive tone (mostly fundamental) instead of FM, which rang metallic */
-    M.keys=new T.PolySynth(T.Synth,{oscillator:{type:'custom',partials:[1,.5,.18,.08,.03]},
-      envelope:{attack:.01,decay:5,sustain:.35,release:3}});            // chords ring on instead of dying away at once
-    M.keys.volume.value=-9.5;
-    M.cho=new T.Chorus(1.1,3.2,.4).start();M.trem=new T.Tremolo(2.4,.12).start();M.keys.chain(M.cho,M.trem,M.lpT);
-    M.bass=new T.MonoSynth({oscillator:{type:'triangle'},envelope:{attack:.015,decay:.25,sustain:.75,release:.35},
-      filter:{type:'lowpass',Q:.3,rolloff:-24},filterEnvelope:{attack:.02,decay:.2,sustain:.5,release:.4,baseFrequency:90,octaves:2.4}});   // lets a little of the note's upper harmonics through, so the bass line reads on small speakers
-    M.bass.volume.value=-13.5;M.bass.connect(M.lpT);
-    M.lead=new T.Synth({portamento:.035,oscillator:{type:'custom',partials:[1,.18,.04]},envelope:{attack:.05,decay:.5,sustain:.3,release:1.3}});
-    M.lead.volume.value=-12;M.dly=new T.FeedbackDelay('8n.',.2);M.dly.wet.value=.18;M.lead.chain(M.dly,M.lpT);
+    M.cho=new T.Chorus(1.1,3.2,.4).start();M.trem=new T.Tremolo(2.4,.12).start();M.cho.chain(M.trem,M.lpT);
+    M.leadF=new T.Filter(3000,'lowpass');M.dly=new T.FeedbackDelay('8n.',.2);M.dly.wet.value=.18;M.leadF.chain(M.dly,M.lpT);
     M.bell=new T.PolySynth(T.FMSynth,{harmonicity:3.01,modulationIndex:6,envelope:{attack:.002,decay:1.2,sustain:0,release:1.2},
       modulationEnvelope:{attack:.002,decay:.3,sustain:0,release:.3}});
     M.bell.volume.value=-18;M.bell.connect(M.lpD);
     M.kick=new T.MembraneSynth({pitchDecay:.045,octaves:3.5,oscillator:{type:'sine'},envelope:{attack:.002,decay:.32,sustain:0,release:.1}});
-    M.kick.volume.value=-11;M.kick.connect(M.lpD);
-    M.snF=new T.Filter(1050,'bandpass');M.snF.Q.value=.6;
-    M.snare=new T.NoiseSynth({noise:{type:'pink'},envelope:{attack:.002,decay:.13,sustain:0,release:.05}});
-    M.snare.volume.value=-9;M.snare.chain(M.snF,M.lpD);
-    M.hatF=new T.Filter(4800,'bandpass');M.hatF.Q.value=.6;
-    M.hat=new T.NoiseSynth({noise:{type:'pink'},envelope:{attack:.003,decay:.03,sustain:0,release:.02}});
-    M.hat.volume.value=-14;M.hat.chain(M.hatF,M.lpD);
-    // vinyl: hiss plus sparse clicks, pre-rendered
+    M.kick.connect(M.lpD);
+    M.snF=new T.Filter(1050,'bandpass');M.snF.connect(M.lpD);M.hatF=new T.Filter(4800,'bandpass');M.hatF.connect(M.lpD);
+    // vinyl: sparse record clicks, pre-rendered.  It plays on the Ambient bed slider (and fades out with the music), so that slider at zero is silence
     M.crackleBuf=renderLoop(11,9,(d,p,n)=>{const a=Math.pow(Math.random(),3)*.5,len=RI(2,7);
-      for(let k=0;k<len;k++)d[(p+k)%n]+=(Math.random()*2-1)*a*(1-k/len);},.003);     // sparse record clicks over only a trace of hiss
+      for(let k=0;k<len;k++)d[(p+k)%n]+=(Math.random()*2-1)*a*(1-k/len);},.003);
     M.built=true;
   },
+  /* the instruments that differ from room to room are rebuilt when the room changes */
+  setBand(id){
+    const T=Tone,M=this,B=M.band=BANDS[id]||BANDS.ramen;if(M.bandId===id)return;M.bandId=id;
+    const kill=n=>{try{if(n&&n.dispose)n.dispose();}catch(e){}},setv=(p,v)=>{try{if(p&&'value'in p)p.value=v;}catch(e){}};
+    [M.keys,M.bass,M.lead,M.snare,M.hat].forEach(kill);
+    M.keys=new T.PolySynth(T.Synth,{oscillator:{type:'custom',partials:B.keys.partials},envelope:B.keys.env});M.keys.volume.value=B.keys.vol;M.keys.connect(M.cho);
+    M.bass=new T.MonoSynth({oscillator:{type:B.bass.type},envelope:B.bass.env,
+      filter:{type:'lowpass',Q:.3,rolloff:-24},filterEnvelope:{attack:.02,decay:.2,sustain:.5,release:.4,baseFrequency:B.bass.fb,octaves:B.bass.fo}});
+    M.bass.volume.value=B.bass.vol;M.bass.connect(M.lpT);
+    M.lead=new T.Synth({portamento:B.lead.port,oscillator:{type:'custom',partials:B.lead.partials},envelope:B.lead.env});M.lead.volume.value=B.lead.vol;M.lead.connect(M.leadF);
+    M.snare=new T.NoiseSynth({noise:{type:'pink'},envelope:{attack:.002,decay:B.snare.decay,sustain:0,release:.05}});M.snare.volume.value=B.snare.vol;M.snare.connect(M.snF);
+    M.hat=new T.NoiseSynth({noise:{type:'pink'},envelope:{attack:.003,decay:B.hat.decay,sustain:0,release:.02}});M.hat.volume.value=B.hat.vol;M.hat.connect(M.hatF);
+    M.kick.volume.value=B.kick;
+    setv(M.snF.frequency,B.snare.f);setv(M.snF.Q,B.snare.q);setv(M.hatF.frequency,B.hat.f);setv(M.hatF.Q,.6);setv(M.leadF.frequency,B.lead.lp);
+    setv(M.trem.frequency,B.keys.trem[0]);setv(M.trem.depth,B.keys.trem[1]);setv(M.dly.wet,B.lead.dly);setv(M.wob.depth,B.wob);setv(M.out.gain,B.out);
+  },
+  bright(k){const B=this.band;try{this.lfo.min=B.lp[0]*k;this.lfo.max=B.lp[1]*k;}catch(e){}},
+  crackleGain(){const el=document.querySelector('[data-bus="music"]'),v=el?+el.value:70;return 7*Math.min(1,Math.pow(v/70,1.7));},
   start(cfg){
     if(!this.built)this.build();
-    this.cfg=cfg;this.step=0;this.sec=null;this.on=true;
-    Tone.Transport.cancel();Tone.Transport.bpm.value=cfg.bpm;
+    Tone.Transport.cancel();this.setBand(cfg.band);this.bright(1);
+    this.cfg=cfg;this.step=0;this.sec=null;this.hist={prog:[],tr:null,arr:null};this.on=true;
+    Tone.Transport.bpm.value=cfg.bpm;
     Tone.Transport.scheduleRepeat(t=>{try{this.tick(t);}catch(e){console.warn(e);}},'16n');
     Tone.Transport.start('+0.2');
-    this.crackle=noiseLoop(A.bus.music,[['highpass',600,.5],['lowpass',5000,.5]],1.6,this.crackleBuf);
+    this.crk=ac.createGain();this.crk.gain.value=this.crackleGain();this.crk.connect(A.bus.bed);
+    this.crackle=noiseLoop(this.crk,[['highpass',600,.5],['lowpass',5000,.5]],1,this.crackleBuf);
   },
   stop(){if(!this.on)return;this.on=false;Tone.Transport.stop();Tone.Transport.cancel();
-    this.keys.releaseAll();this.bell.releaseAll();if(this.crackle)this.crackle.stop();},
+    this.keys.releaseAll();this.bell.releaseAll();if(this.crackle){this.crackle.stop();this.crk.disconnect();this.crackle=null;}},
   newBar(){
-    const c=this.cfg;let S=this.sec;
+    const c=this.cfg,B=this.band,H=this.hist,F=n=>Tone.Frequency(n);let S=this.sec;
     if(!S||S.bar>=S.bars){
-      const pool=c.progs.filter(p=>!S||p!==S.prog);
-      S=this.sec={prog:pick(pool),bars:pick([16,16,24]),bar:0,intro:(!S||R()<.5)?4:0};
-      const iv=c.scale||[0,3,5,7,10];                                   // melody scale: minor pentatonic unless the scene says otherwise
-      this.scale=[...iv,...iv.map(i=>i+12),24].map(i=>Tone.Frequency(S.prog.root).transpose(i).toNote());this.scaleM=this.scale.map(n=>Tone.Frequency(n).toMidi());
+      const wp=o=>{const ks=Object.keys(o);let r=R()*ks.reduce((a,k)=>a+o[k],0);for(const k of ks)if((r-=o[k])<0)return k;return ks[0];};
+      let pool=c.progs.filter(p=>!H.prog.includes(p));if(!pool.length)pool=c.progs.filter(p=>!S||p!==S.prog);
+      const prog=pick(pool);H.prog.push(prog);while(H.prog.length>Math.max(1,Math.min(3,c.progs.length-2)))H.prog.shift();
+      const tr=S?pick([0,2,-2,3,-3,5,-5].filter(v=>v!==H.tr)):0;H.tr=tr;                                    // a new key each section
+      const arrs={};for(const k in B.arr)if(k!==H.arr&&(S||k==='full'))arrs[k]=B.arr[k];const arr=wp(arrs);H.arr=arr;
+      S=this.sec={prog,tr,arr,bars:pick([12,16,16,24]),bar:0,intro:(!S||R()<.5)?4:0,bpm:c.bpm*(S?R(.955,1.045):1),swing:c.swing*(S?R(.8,1.15):1)};
+      const low=n=>{const m=F(n).toMidi()+tr;return F(n).transpose(m<29?tr+12:m>43?tr-12:tr).toNote();};
+      S.ch=prog.ch.map(h=>({n:h.n.map(n=>F(n).transpose(tr).toNote()),b:low(h.b),t:h.t}));
+      const iv=c.scale||[0,3,5,7,10],root=F(prog.root).transpose(tr>3?tr-12:tr).toNote();                   // melody scale: minor pentatonic unless the scene says otherwise
+      this.scale=[...iv,...iv.map(i=>i+12),24].map(i=>F(root).transpose(i).toNote());this.scaleM=this.scale.map(n=>F(n).toMidi());
       this.deg=RI(3,6);
+      const bp=Tone.Transport.bpm;if(bp.rampTo)bp.rampTo(S.bpm,3);else bp.value=S.bpm;                      // the tempo breathes a little from section to section
+      this.bright(R(.85,1.2));
     }
     const b=S.bar%4;
     if(b===0)this.newPhrase();
-    this.ch=S.prog.ch[b];this.nx=S.prog.ch[(b+1)%4];
-    this.brk=S.bar===S.bars-1;this.fill=b===3&&!this.brk;this.drums=S.bar>=S.intro&&!this.brk;
+    this.ch=S.ch[b];this.nx=S.ch[(b+1)%4];
+    const P=this.ph,n=this.ch.n;                                                                            // this phrase's voicing of the chord
+    this.voic=P.inv===1&&n.length>3?[...n.slice(1),F(n[0]).transpose(12).toNote()]:P.inv===2&&n.length>3?[F(n[n.length-1]).transpose(-12).toNote(),...n.slice(0,-1)]:n;
+    this.brk=S.bar===S.bars-1;this.fill=b===3&&!this.brk;
+    this.drums=S.bar>=S.intro&&!this.brk&&S.arr!=='noDrums'&&S.arr!=='duo';
   },
   motif(){
     const slots=[0,2,3,4,6,7,8,10,11,12,14],n=RI(2,5),used=new Set(),m=[];
@@ -481,8 +537,11 @@ const Music={
     return m;
   },
   newPhrase(){
-    this.ph={kick:pick([[0,10],[0,7,10],[0,8,11],[0,3,10],[0,10,14]]),ghost:pick([null,null,15,9,7]),hat:R(.15,.6),
-      fill:RI(0,3),comp:wpick([0,1,2,3],i=>[3.5,3,1.5,1.5][i]),b10:R()<.55,b14:R()<.35,mel:R()<.55,mA:this.motif(),mB:this.motif()};
+    const B=this.band,S=this.sec,wp=o=>{const ks=Object.keys(o);let r=R()*ks.reduce((a,k)=>a+o[k],0);for(const k of ks)if((r-=o[k])<0)return k;return ks[0];};
+    const lead=S.arr==='noLead'?'rest':S.arr==='arp'?(B.leads.arp?'arp':'rest'):S.arr==='duo'?pick(['motif','long']):wp(B.leads);
+    this.ph={kick:pick(B.kicks),ghost:pick([null,null,15,9,7]),hat:R(.15,.6),fill:RI(0,3),
+      comp:S.arr==='arp'&&!B.leads.arp?pick([3,8]):pick(B.comps),inv:pick([0,0,1,2]),b10:R()<.55,b14:R()<.35,
+      lead,mA:this.motif(),mB:this.motif(),l2:R()<.5,ld:RI(3,7),arp:pick([[0,1,2,3,2,1,2,3],[3,2,1,0,1,2,3,2],[0,2,1,3,2,3,1,2],[0,1,2,3,0,1,2,3]]),gap:pick([0,0,2,4])};
   },
   snap(d,ch){
     if(!ch.pc)ch.pc=new Set([...ch.n,ch.b].map(n=>Tone.Frequency(n).toMidi()%12));
@@ -490,47 +549,78 @@ const Music={
     return d;
   },
   tick(time){
-    const c=this.cfg,s=this.step%16,six=60/c.bpm/4,t=time+(s%2?c.swing*six:0),hum=()=>R(0,.02);                 // loose, played-by-hand timing
+    const c=this.cfg,B=this.band,s=this.step%16;
     if(s===0)this.newBar();
-    const S=this.sec,P=this.ph,ch=this.ch,M=this;
-    /* drums: soft kick, muted snare a touch late, dusty hats */
+    const S=this.sec,P=this.ph,ch=this.ch,N=this.voic,M=this,F=n=>Tone.Frequency(n),six=60/S.bpm/4,t=time+(s%2?S.swing*six:0),hm=()=>R(0,.02),beat=s%4===0;   // loose, played-by-hand timing
+    /* drums: each room's kit is played its own way */
     if(this.drums){
-      if(P.kick.includes(s)||(this.fill&&P.fill===1&&s===14))M.kick.triggerAttackRelease('C1','8n',t+hum(),s===0?.9:.62);
-      const sv=(s===4||s===12)?.7:P.ghost===s?.18:(this.fill&&P.fill===0&&(s===13||s===15))?.3:0;
-      if(sv)M.snare.triggerAttackRelease('16n',t+.012+hum(),sv);
-      if(!(this.fill&&P.fill===2&&s>=12)){
-        const hv=s%4===2?.5:s%2===0?.36:(R()<P.hat?.16:0);
-        if(hv)M.hat.triggerAttackRelease('32n',t+hum(),hv*R(.8,1.1));
-      }
+      const kick=v=>M.kick.triggerAttackRelease('C1','8n',t+hm(),v),sn=v=>M.snare.triggerAttackRelease('16n',t+.012+hm(),v),hat=v=>M.hat.triggerAttackRelease('32n',t+hm(),v*R(.8,1.1));
+      const fk=this.fill&&P.fill===1&&s===14,roll=this.fill&&P.fill===0&&(s===13||s===15),cut=this.fill&&P.fill===2&&s>=12;
+      if(B.drum==='half'){                                  // slow and heavy-lidded: the backbeat only on three
+        if(P.kick.includes(s)||fk)kick(s===0?.9:.6);
+        if(s===8)sn(.62);else if(P.ghost===s)sn(.14);else if(roll)sn(.2);
+        if(!cut){const hv=s%4===2?.3:s%8===0?.2:(R()<P.hat*.5?.1:0);if(hv)hat(hv);}}
+      else if(B.drum==='shuffle'){                          // bouncing: kick on one and three, claps on two and four, steady hats
+        if(s===0||s===8||P.kick.includes(s)||fk)kick(s===0?.85:.6);
+        if(s===4||s===12)sn(.7);else if(P.ghost===s)sn(.2);else if(roll)sn(.32);
+        if(!cut){const hv=s%2===0?(beat?.34:.5):(R()<.35+P.hat*.5?.2:0);if(hv)hat(hv);}}
+      else if(B.drum==='ride'){                             // jazz time: ding, ding-a-ding on the ride, a feathered kick, brushes
+        if(beat)kick(s===0?.42:.26);else if(fk)kick(.5);
+        if(s===4||s===12)sn(.42);else if(roll)sn(.24);else if(R()<P.hat*.14)sn(.14);
+        if(!cut){const hv=beat?(s%8===4?.5:.4):(s===7||s===15)?.3:(s%2===0&&R()<P.hat*.3?.14:0);if(hv)hat(hv);}}
+      else{                                                 // barely there: a soft pulse and a shaker
+        if(s===0||(s===10&&P.b10))kick(s===0?.6:.35);
+        if(s===12&&P.ghost)sn(.16);
+        if(!cut&&s%2===0&&R()<.5+P.hat*.5)hat(s%4===2?.26:.14);}
     }
-    /* electric piano comping */
-    const strum=(notes,dur,vel)=>{const lay=R(.022,.05),drop=R()<.2?notes.length-1:-1;       // rolled chords, sometimes leaving a note out
-      notes.forEach((n,i)=>{if(i!==drop)M.keys.triggerAttackRelease(n,dur,t+hum()+i*lay,vel*R(.7,1.1));});};
-    if(this.brk){if(s===0)strum(ch.n,six*13,.32);}
-    else if(P.comp===0){if(s===0)strum(ch.n,six*14,.46);}
-    else if(P.comp===1){if(s===0)strum(ch.n,six*9,.46);if(s===10)strum(ch.n.slice(1),six*5,.3);}
-    else if(P.comp===2){if(s===0)strum(ch.n,six*5,.44);if(s===6)strum(ch.n,six*5,.32);if(s===12)strum(ch.n.slice(0,3),six*4,.28);}
-    else{if(s<8&&s%2===0&&ch.n[s/2])M.keys.triggerAttackRelease(ch.n[s/2],six*(14-s),t,.42);
-         if(s===10)M.keys.triggerAttackRelease(ch.n[ch.n.length-1],six*5,t,.3);}
+    /* keys: the chord instrument, comped the way this room's player would */
+    const key=(n,dur,vel,dt=0)=>M.keys.triggerAttackRelease(n,dur,t+hm()+dt,vel);
+    const strum=(notes,dur,vel)=>{const lay=R(.022,.05),drop=R()<.2?notes.length-1:-1;notes.forEach((n,i)=>{if(i!==drop)key(n,dur,vel*R(.7,1.1),i*lay);});};      // rolled, sometimes leaving a note out
+    const stab=(notes,dur,vel)=>notes.forEach((n,i)=>key(n,dur,vel*R(.8,1.05),i*.006));
+    if(this.brk){if(s===0)strum(N,six*13,.32);}
+    else switch(P.comp){
+      case 0:if(s===0)strum(N,six*14,.46);break;                                                                          // one rolled chord, left to ring
+      case 1:if(s===0)strum(N,six*9,.46);if(s===10)strum(N.slice(1),six*5,.3);break;                                      // a chord and an answer
+      case 2:if(s===0)strum(N,six*5,.44);if(s===6)strum(N,six*5,.32);if(s===12)strum(N.slice(0,3),six*4,.28);break;       // three pushes
+      case 3:if(s<8&&s%2===0&&N[s/2])key(N[s/2],six*(14-s),.42);if(s===10)key(N[N.length-1],six*5,.3);break;              // climbing through the chord
+      case 4:if(s===4||s===12)stab(N,six*1.7,.44);else if(s===14&&P.b14)stab(N.slice(1),six*1.2,.28);else if(s===0)key(N[0],six*3,.3);break;   // backbeat stabs
+      case 5:if(beat)stab(N.slice(-3),six*1.5,s%8===4?.42:.32);break;                                                     // four to the bar
+      case 6:if(s===0)stab(N,six*2.4,.42);if(s===6)stab(N,six*1.6,.36);if(s===13&&P.b14)stab(N.slice(-3),six*1.3,.26);break;   // the Charleston rhythm
+      case 7:if(s===0)strum(N,six*15.5,.42);break;                                                                        // a held pad
+      default:if(s%2===0)key(N[[0,2,1,2,0,3,1,2][s/2]%N.length],six*3,s===0?.42:.3);                                      // broken chords
+    }
     /* bass */
-    if(c.walk&&!this.brk){
-      if(s%4===0){const q=s/4,root=ch.b,nxt=this.nx.b;
-        const n=q===0?root:q===1?Tone.Frequency(root).transpose(pick([ch.t||7,7])).toNote():q===2?Tone.Frequency(root).transpose(pick([7,5,10])).toNote():Tone.Frequency(nxt).transpose(pick([-1,1,-2])).toNote();
-        M.bass.triggerAttackRelease(n,six*3.4,t,.6);}
-    }else{
-      if(s===0)M.bass.triggerAttackRelease(ch.b,six*7,t,.7);
-      if(s===10&&P.b10&&!this.brk)M.bass.triggerAttackRelease(R()<.5?ch.b:Tone.Frequency(ch.b).transpose(7).toNote(),six*3,t,.5);
-      if(s===14&&P.b14&&!this.brk)M.bass.triggerAttackRelease(Tone.Frequency(this.nx.b).transpose(pick([-1,2,-2])).toNote(),six*1.5,t,.45);
+    if(S.arr!=='duo'||this.brk){
+      const bass=(n,dur,vel)=>M.bass.triggerAttackRelease(n,dur,t,vel),up=(n,i)=>F(n).transpose(i).toNote();
+      if(this.brk){if(s===0)bass(ch.b,six*7,.65);}
+      else if(B.bassStyle==='walk'){if(beat){const q=s/4;bass(q===0?ch.b:q===1?up(ch.b,pick([ch.t||7,7])):q===2?up(ch.b,pick([7,5,10])):up(this.nx.b,pick([-1,1,-2])),six*3.4,.6);}}
+      else if(B.bassStyle==='two'){                                                                                        // root, fifth, and a walk-up into the next bar
+        if(s===0)bass(ch.b,six*3,.72);if(s===8)bass(up(ch.b,7),six*3,.56);
+        if(s===6&&P.b10)bass(ch.b,six*1.2,.4);if(s===14&&P.b14)bass(up(this.nx.b,pick([-1,-2,2])),six*1.5,.46);}
+      else if(B.bassStyle==='whole'){if(s===0)bass(ch.b,six*14,.62);if(s===8&&P.b10)bass(up(ch.b,7),six*6,.36);}
+      else{if(s===0)bass(ch.b,six*7,.7);
+        if(s===10&&P.b10)bass(R()<.5?ch.b:up(ch.b,7),six*3,.5);
+        if(s===14&&P.b14)bass(up(this.nx.b,pick([-1,2,-2])),six*1.5,.45);}
     }
-    /* melody: motif A on bars 1 and 3, answer B on bars 2 and 4 */
-    if(P.mel&&!this.brk&&S.bar>=S.intro){
-      const b=S.bar%4,m=(b===0||b===2)?P.mA:P.mB;
-      if(!(b===3&&P.fill===2))for(const nt of m)if(nt.s===s){
-        let d=clamp(nt.deg+(b===2&&nt===m[m.length-1]?pick([-1,1]):0),0,10);
-        if(s%4===0||nt===m[m.length-1])d=this.snap(d,ch);
-        M.lead.triggerAttackRelease(this.scale[d],nt.dur,t+hum(),R(.3,.5));}
+    /* lead: a motif and its answer, long held notes, or a music-box arpeggio */
+    if(P.lead!=='rest'&&!this.brk&&S.bar>=S.intro){
+      const hi=(B.lead.up||0)+(S.arr==='high'?12:0),pitch=n=>{const m=F(n).toMidi();let k=hi;while(m+k>88)k-=12;return k?F(n).transpose(k).toNote():n;},      // never up into the squeaky octave
+        lead=(n,dur,vel,dt=0)=>M.lead.triggerAttackRelease(pitch(n),dur,t+hm()+dt,vel),b=S.bar%4;
+      if(P.lead==='motif'){
+        const m=(b===0||b===2)?P.mA:P.mB;
+        if(!(b===3&&P.fill===2))for(const nt of m)if(nt.s===s){
+          let d=clamp(nt.deg+(b===2&&nt===m[m.length-1]?pick([-1,1]):0),0,10);
+          if(beat||nt===m[m.length-1])d=this.snap(d,ch);
+          if(B.lead.grace&&d>0&&R()<B.lead.grace)M.lead.triggerAttackRelease(pitch(this.scale[d-1]),'32n',t-.07,.24);     // a plucked grace note
+          lead(this.scale[d],nt.dur,R(.3,.5));
+          if(B.lead.trill&&nt===m[m.length-1]&&R()<B.lead.trill&&d<10)lead(this.scale[d+1],'8n',.26,six*2);}}                                                  // a little two-note tag
+      else if(P.lead==='long'){
+        if(s===0)lead(this.scale[this.snap(P.ld,ch)],six*(P.l2?6.5:12),.4);
+        if(s===8&&P.l2)lead(this.scale[this.snap(clamp(P.ld+pick([-1,1,2]),0,10),ch)],six*6,.34);}
+      else if(s%2===0&&!(P.gap&&s>=16-P.gap*2)&&!(b===3&&P.fill===2&&s>=8)){
+        const i=P.arp[s/2]%N.length;lead(N[i],six*3,s===0?.4:R(.22,.32));}
     }
-    if(c.bell&&s===0&&S.bar%2===0&&R()<.6)M.bell.triggerAttackRelease(Tone.Frequency(ch.n[ch.n.length-1]).transpose(12).toNote(),'2n',t+six*2,.3);
+    if(c.bell&&s===0&&S.bar%2===0&&R()<.6)M.bell.triggerAttackRelease(F(ch.n[ch.n.length-1]).transpose(12).toNote(),'2n',t+six*2,.3);
     if(s===15)S.bar++;
     this.step++;
   }
@@ -872,13 +962,24 @@ function drawRadio(g,x,y,t,o={}){         // x = centre, y = what it stands on
     g.lineWidth=1.8;ln(g,nx+4,ny-1,nx+4,ny-14);if(i%2)ln(g,nx+4,ny-14,nx+10,ny-11);}
   g.globalAlpha=1;
 }
-function drawCat(g,x,y,t,col='#c98a4a'){   // asleep in a loaf, breathing; an ear flicks now and then
-  const br=Math.sin(t*1.25)*1.2,tw=Math.sin(t*.41)>.965?-3:0,d=shade(col,.78);
-  g.fillStyle=col;ell(g,x,y-15-br*.5,34,16+br);g.fill();
-  g.fillStyle=d;g.lineCap='round';g.strokeStyle=d;g.lineWidth=7;g.beginPath();g.moveTo(x+28,y-8);g.quadraticCurveTo(x+6,y+2+Math.sin(t*.8)*1.5,x-18,y-5);g.stroke();
-  g.fillStyle=col;ell(g,x-26,y-22-br*.4,15,13);g.fill();
-  g.beginPath();g.moveTo(x-38,y-30);g.lineTo(x-35,y-44+tw);g.lineTo(x-27,y-33);g.fill();g.beginPath();g.moveTo(x-24,y-34);g.lineTo(x-17,y-45);g.lineTo(x-14,y-31);g.fill();
-  g.fillStyle=d;for(let i=0;i<3;i++)g.fillRect(x-4+i*11,y-30-br*.5,4,9);
+function drawCat(g,x,y,t,col='#c98a4a'){
+  /* Asleep in a loaf most of the time, breathing.  On a 46-second round it lifts its head and looks about, swishes its
+     tail, washes a paw, and has a long stretch; an ear flicks now and then. */
+  const d=shade(col,.78),u=t%46,br=Math.sin(t*1.25)*1.2,win=(a,b,k)=>u>a&&u<b?Math.min(1,Math.sin(Math.PI*(u-a)/(b-a))*k):0;
+  const up=win(8,15,3),swish=win(15.5,19.5,2)+win(30,33,2),wash=win(22,28,3),str=win(36,39.5,2.5);
+  const tw=(Math.sin(t*.41)>.965||(up>.5&&Math.sin(t*7)>.8))?-3:0,hx=x-26-str*11-up*2,hy=y-22-br*.4-up*12+wash*3+str*9;
+  g.lineCap='round';
+  if(swish>0){g.strokeStyle=d;g.lineWidth=7;const a=Math.sin(t*5.5)*14*swish;g.beginPath();g.moveTo(x+28,y-8);g.quadraticCurveTo(x+46,y-10-swish*8,x+44+a,y-16-swish*26);g.stroke();}   // tail up and swishing
+  g.fillStyle=col;ell(g,x+str*5,y-15-br*.5+str*3.5,34+str*9,16+br-str*4.5);g.fill();
+  if(str>0){g.strokeStyle=col;g.lineWidth=7;ln(g,x-22,y-5,x-50-str*12,y-3);ln(g,x-16,y-3,x-44-str*12,y-1);}                                                                              // front legs pushed out
+  if(swish<=0){g.strokeStyle=d;g.lineWidth=7;g.beginPath();g.moveTo(x+28,y-8);g.quadraticCurveTo(x+6,y+2+Math.sin(t*.8)*1.5,x-18,y-5);g.stroke();}                                     // tail tucked round
+  g.fillStyle=d;for(let i=0;i<3;i++)g.fillRect(x-4+i*11+str*5,y-30-br*.5+str*5,4,9);
+  if(wash>0){g.strokeStyle=col;g.lineWidth=7;ln(g,x-20,y-6,hx-9,hy+7+Math.sin(t*9)*3);}                                                                                                // a paw up to the face
+  g.fillStyle=col;ell(g,hx,hy,15,13);g.fill();
+  g.beginPath();g.moveTo(hx-12,hy-8);g.lineTo(hx-9,hy-22+tw);g.lineTo(hx-1,hy-11);g.fill();g.beginPath();g.moveTo(hx+2,hy-12);g.lineTo(hx+9,hy-23);g.lineTo(hx+12,hy-9);g.fill();
+  const open=up>.6&&Math.sin(t*1.9)<.96,lk=Math.sin(u*1.4)*2.2*up;g.strokeStyle='rgba(50,34,26,.75)';g.fillStyle='rgba(50,34,26,.85)';g.lineWidth=1.5;
+  for(const ex of[-6,4]){if(open){ell(g,hx+ex+lk,hy-1,1.8,2.2);g.fill();}else{g.beginPath();g.arc(hx+ex,hy-2,2.6,.25,Math.PI-.25);g.stroke();}}                                        // eyes: shut, or open and looking about
+  if(wash>0){g.fillStyle='#e58f8f';ell(g,hx-1,hy+5+Math.sin(t*9)*1.5,1.6,2);g.fill();}                                                                                                 // the tongue at work
 }
 function drawLuckyCat(g,x,y,t){            // a beckoning cat figurine, paw rocking slowly
   g.fillStyle='#f3eee2';ell(g,x,y-17,17,17);g.fill();ell(g,x,y-40,14,12.5);g.fill();
@@ -1433,8 +1534,42 @@ SCENES.ramen=function(){
     }
     if(car.p>=0){car.p+=dt/4.5;if(car.p>1){car.p=-1;car.t=R(14,40);}}else if((car.t-=dt)<0)car.p=0;
   }
+  /* ── birds sheltering on the wire across the street: they hop along, shake the rain off, look about, and now and then
+        one flies off and comes back ── */
+  const wireY=x=>{const k=(x-WIN.x)/WIN.w;return WIN.y+52+k*8+Math.sin(Math.PI*k)*20;};
+  const BIRDS=[250,290,402].map((x,i)=>({x,x0:x,x1:x,dir:i%2?1:-1,st:'sit',t:R(2,9),k:0,fx:0,fy:0,col:['rgba(150,166,198,.95)','rgba(178,168,160,.95)','rgba(140,156,186,.95)'][i]}));
+  function stepBirds(dt){
+    for(const b of BIRDS){b.t-=dt;
+      if(b.st==='sit'){if(b.t<0){const r=R(),free=x=>x>WIN.x+30&&x<WIN.x+WIN.w-30&&BIRDS.every(o=>o===b||Math.abs((o.st==='hop'?o.x1:o.x)-x)>24);
+          if(r<.4){const nx=b.x+pick([-1,1])*R(14,40);if(free(nx)){b.st='hop';b.x0=b.x;b.x1=nx;b.dir=nx>b.x?1:-1;b.k=0;if(R()<.25)SFX.chirp(panX(b.x)-.2);}else b.t=R(1,3);}
+          else if(r<.65){b.st='fluff';b.t=R(.7,1.1);if(R()<.3)SFX.chirp(panX(b.x)-.2);}
+          else if(r<.87){b.dir=-b.dir;b.t=R(2,7);}
+          else if(BIRDS.every(o=>o.st==='sit'||o.st==='hop'||o.st==='fluff')){b.st='leave';b.k=0;b.x0=b.x;b.dir=b.x>WIN.x+WIN.w/2?1:-1;}
+          else b.t=R(2,5);}}
+      else if(b.st==='hop'){b.k+=dt/.28;b.x=lerp(b.x0,b.x1,Math.min(1,b.k));if(b.k>=1){b.st='sit';b.t=R(2,8);}}
+      else if(b.st==='fluff'){if(b.t<0){b.st='sit';b.t=R(3,9);}}
+      else if(b.st==='leave'){b.k+=dt/1.5;if(b.k>=1){b.st='gone';b.t=R(9,26);}}
+      else if(b.st==='gone'){if(b.t<0){let nx=0,n=0;do{nx=WIN.x+R(40,WIN.w-40);}while(n++<20&&BIRDS.some(o=>o!==b&&Math.abs(o.x-nx)<26));b.x0=nx;b.x=nx;b.dir=nx>WIN.x+WIN.w/2?-1:1;b.st='come';b.k=0;}}
+      else{b.k+=dt/1.5;if(b.k>=1){b.st='sit';b.t=R(2,7);}}}
+  }
+  function drawBirds(g,t){
+    g.strokeStyle='rgba(12,14,24,.9)';g.lineWidth=1.6;g.beginPath();for(let x=WIN.x;x<=WIN.x+WIN.w;x+=30)x===WIN.x?g.moveTo(x,wireY(x)):g.lineTo(x,wireY(x));g.stroke();
+    for(const b of BIRDS){if(b.st==='gone')continue;
+      let x=b.x,y=wireY(b.x)-1,fly=0,sc=1,wob=0;
+      if(b.st==='hop')y-=Math.sin(Math.PI*Math.min(1,b.k))*7;
+      else if(b.st==='fluff'){sc=1.22;wob=Math.sin(t*46)*1.3;}
+      else if(b.st==='leave'||b.st==='come'){const k=ease(b.st==='leave'?b.k:1-b.k),dx=b.st==='leave'?b.dir:-b.dir;x=b.x0+dx*k*(WIN.w*.7);y=wireY(b.x0)-1-k*150-Math.sin(Math.PI*k)*20;fly=1;}
+      g.save();g.translate(x+wob,y);g.scale(b.dir*(fly&&b.st==='come'?-1:1),1);g.fillStyle=b.col;g.strokeStyle=b.col;g.lineCap='round';
+      if(!fly){g.lineWidth=1.3;ln(g,-2,-2,-2,1);ln(g,2,-2,2,1);}
+      g.lineWidth=3;ln(g,-6*sc,-6,-14,-2+(fly?-3:0));                                            // tail
+      ell(g,0,-8,8.5*sc,6.6*sc);g.fill();ell(g,6.5,-14-(sc-1)*4,4.6,4.4);g.fill();              // body and head
+      g.beginPath();g.moveTo(10.5,-15);g.lineTo(14.5,-13.6);g.lineTo(10.5,-12.6);g.fill();     // beak
+      if(fly){const w=Math.sin(t*26);g.lineWidth=3.4;g.beginPath();g.moveTo(-1,-10);g.quadraticCurveTo(-5,-16-w*10,-11,-12-w*14);g.stroke();}
+      g.restore();}
+  }
   function drawWindow(g){
     const{x:X,y:Y,w,h}=WIN;g.save();g.beginPath();g.rect(X,Y,w,h);g.clip();
+    drawBirds(g,WARM.age);
     if(car.p>=0){const cx=X-120+car.p*(w+240);g.globalCompositeOperation='lighter';g.fillStyle=rg(g,cx,Y+h*.8,0,130,0,'rgba(255,225,170,.26)',1,'rgba(255,225,170,0)');g.fillRect(cx-130,Y+h*.8-130,260,260);g.globalCompositeOperation='source-over';}
     for(const q of walkers){if(q.wait>0)continue;const by=Y+h+6,bob=Math.sin(q.ph)*2;g.fillStyle='rgba(7,10,20,.88)';
       rr(g,q.x-17,by-118+bob,34,120,14);g.fill();ell(g,q.x,by-134+bob,13,14);g.fill();
@@ -1957,6 +2092,7 @@ SCENES.ramen=function(){
       else{q.sit=Math.min(1,q.sit+dt*1.3);if(q.sit>=1){q.st='sit';q.t=R(28,80);q.eat=R(2,5);}}
     }
     for(const k of TICK)k.a=clamp(k.a+(k.on?dt*2:-dt*3),0,1);
+    stepBirds(dt);
     if((bgSfx.ticket-=dt*(WARM.rush?5:1))<0){bgSfx.ticket=R(16,40);const off=TICK.filter(k=>!k.on);if(off.length){const k=pick(off);k.on=true;k.h=RI(48,66);SFX.rustle(panX(k.x));}}
     /* steam everywhere */
     emit(0,7,dt,()=>puff(POT1.cx,POT1.top-6,{spread:58}));
@@ -2019,7 +2155,7 @@ SCENES.ramen=function(){
   function stopAudio(){if(aud){aud.stop();aud=null;}}
 
   /* ── music: ~70 BPM, minor and moody ── */
-  const music={bpm:70,swing:.26,progs:[
+  const music={band:'ramen',bpm:70,swing:.26,progs:[
     {root:'D4',ch:[{n:['F3','A3','C4','E4'],b:'D2'},{n:['F3','A3','Bb3','D4'],b:'Bb1'},{n:['F3','Bb3','D4','A4'],b:'G1'},{n:['G3','C#4','F4'],b:'A1'}]},
     {root:'A3',ch:[{n:['G3','B3','C4','E4'],b:'A1'},{n:['E3','G3','A3','C4'],b:'F2'},{n:['F3','A3','C4','E4'],b:'D2'},{n:['G#3','D4','G4'],b:'E2'}]},
     {root:'C4',ch:[{n:['Eb3','G3','Bb3','D4'],b:'C2'},{n:['Eb3','G3','Ab3','C4'],b:'Ab1'},{n:['Eb3','Ab3','C4','G4'],b:'F2'},{n:['F3','Ab3','B3','D4'],b:'G1'}]},
@@ -2641,7 +2777,7 @@ SCENES.diner=function(){
   }
   function stopAudio(){if(aud){aud.stop();aud=null;}}
   /* ── music: ~85 BPM, bright major 7ths ── */
-  const music={bpm:85,swing:.2,scale:[0,2,4,7,9],progs:[
+  const music={band:'diner',bpm:85,swing:.2,scale:[0,2,4,7,9],progs:[
     {root:'C4',ch:[{n:['E3','G3','B3','D4'],b:'C2'},{n:['G3','B3','C4','E4'],b:'A1'},{n:['F3','A3','C4','E4'],b:'D2'},{n:['F3','A3','B3','E4'],b:'G1'}]},
     {root:'F4',ch:[{n:['A3','C4','E4','G4'],b:'F2'},{n:['G3','B3','D4','E4'],b:'E2'},{n:['F3','A3','C4','E4'],b:'D2'},{n:['E3','G3','B3','D4'],b:'C2'}]},
     {root:'G3',ch:[{n:['B3','D4','F#4','A4'],b:'G1'},{n:['G3','B3','D4','F#4'],b:'E2'},{n:['G3','B3','C4','E4'],b:'A1'},{n:['F#3','A3','C4','E4'],b:'D2'}]},
@@ -3157,7 +3293,7 @@ SCENES.bistro=function(){
   }
   function stopAudio(){if(aud){aud.stop();aud=null;}}
   /* ── music: ~80 BPM, jazzier, light walking bass ── */
-  const music={bpm:80,swing:.32,walk:true,scale:[0,2,3,5,7,9,10],progs:[
+  const music={band:'bistro',bpm:80,swing:.32,scale:[0,2,3,5,7,9,10],progs:[
     {root:'D4',ch:[{n:['F3','A3','C4','E4'],b:'D2',t:3},{n:['F3','A3','B3','E4'],b:'G1',t:4},{n:['E3','G3','B3','D4'],b:'C2',t:4},{n:['G3','C#4','F4'],b:'A1',t:4}]},
     {root:'F4',ch:[{n:['Eb3','Ab3','C4','G4'],b:'F2',t:3},{n:['Ab3','C4','D4','G4'],b:'Bb1',t:4},{n:['G3','Bb3','D4','F4'],b:'Eb2',t:4},{n:['E3','Bb3','Eb4'],b:'C2',t:4}]},
     {root:'A3',ch:[{n:['G3','B3','C4','E4'],b:'A1',t:3},{n:['F#3','A3','C4','E4'],b:'D2',t:4},{n:['B3','D4','F#4','A4'],b:'G1',t:4},{n:['G#3','D4','G4'],b:'E2',t:4}]},
@@ -3617,7 +3753,7 @@ SCENES.bakery=function(){
   }
   function stopAudio(){if(aud){aud.stop();aud=null;}}
   /* ── music: ~72 BPM, warm chords with soft bell accents ── */
-  const music={bpm:72,swing:.24,bell:true,scale:[0,2,4,7,9],progs:[
+  const music={band:'bakery',bpm:72,swing:.24,bell:true,scale:[0,2,4,7,9],progs:[
     {root:'F4',ch:[{n:['A3','C4','E4','G4'],b:'F2'},{n:['F3','A3','C4','E4'],b:'D2'},{n:['A3','C4','D4','F4'],b:'Bb1'},{n:['Bb3','D4','F4','G4'],b:'C2'}]},
     {root:'C4',ch:[{n:['E3','G3','B3','D4'],b:'C2'},{n:['G3','B3','D4','E4'],b:'E2'},{n:['A3','C4','E4','G4'],b:'F2'},{n:['F3','A3','C4','D4'],b:'G1'}]},
     {root:'Ab3',ch:[{n:['C4','Eb4','G4','Bb4'],b:'Ab1'},{n:['Eb3','Ab3','C4','G4'],b:'F2'},{n:['C4','Eb4','F4','Ab4'],b:'Db2'},{n:['Db4','F4','Ab4','Bb4'],b:'Eb2'}]},
@@ -3649,7 +3785,7 @@ function tickFrame(dt){
 }
 function frame(now){const dt=Math.min(.05,(now-last)/1000);last=now;tickFrame(dt);requestAnimationFrame(frame);}
 requestAnimationFrame(frame);
-window.__kitchen={ff(sec,step=1/30){for(let t=0;t<sec;t+=step)tickFrame(step);},sim(sec,step=1/30){for(let t=0;t<sec;t+=step){T+=step;scene.update(step,T);}},load(id){scene=makeScene(id);sceneId=id;},get scene(){return scene;}};
+window.__kitchen={ff(sec,step=1/30){for(let t=0;t<sec;t+=step)tickFrame(step);},sim(sec,step=1/30){for(let t=0;t<sec;t+=step){T+=step;scene.update(step,T);}},load(id){scene=makeScene(id);sceneId=id;},Music,get scene(){return scene;}};
 
 function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('on');clearTimeout(toast.id);toast.id=setTimeout(()=>t.classList.remove('on'),2200);}
 let level=0,muted=false;
@@ -3699,7 +3835,7 @@ $('fsBtn').addEventListener('click',fullscreen);
 $('stage').addEventListener('dblclick',()=>document.body.classList.remove('clean'));
 document.querySelectorAll('.ticket').forEach(b=>b.addEventListener('click',()=>{chosen=b.dataset.scene;if(!started&&SCENES[chosen]&&chosen!==sceneId){scene=makeScene(chosen);sceneId=chosen;}   // preview the chosen kitchen behind the start screen
   document.querySelectorAll('.ticket').forEach(o=>o.setAttribute('aria-pressed',o===b));}));
-document.querySelectorAll('#mixer input[data-bus]').forEach(i=>i.addEventListener('input',()=>{if(A.ready)A.bus[i.dataset.bus].gain.setTargetAtTime(sliderGain(+i.value,i.dataset.bus),ac.currentTime,.05);syncRadio();}));
+document.querySelectorAll('#mixer input[data-bus]').forEach(i=>i.addEventListener('input',()=>{if(A.ready)A.bus[i.dataset.bus].gain.setTargetAtTime(sliderGain(+i.value,i.dataset.bus),ac.currentTime,.05);if(Music.crackle)Music.crk.gain.setTargetAtTime(Music.crackleGain(),ac.currentTime,.05);syncRadio();}));
 $('masterVol').addEventListener('input',e=>{if(A.ready)A.out.gain.setTargetAtTime(masterGain(+e.target.value),ac.currentTime,.05);syncRadio();});
 $('bassEq').addEventListener('input',e=>{if(A.ready)A.bass.gain.setTargetAtTime((+e.target.value-50)*.3,ac.currentTime,.05);});
 /* what "other kitchen sounds" means in this kitchen: hover, focus, or long-press */
