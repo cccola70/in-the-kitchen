@@ -696,7 +696,10 @@ function drawArm(g,sh,h,sleeve,skin,s,bend){
   const k=clamp(ext*1.5-.45,.12,1),jf=lerp(.97,.8,k),j=[lerp((sh[0]+e.tx)/2,e.ex,jf),lerp((sh[1]+e.ty)/2,e.ey,jf)];   // a bent elbow stays an elbow
   const m2=limb(g,sh,j,[e.tx,e.ty],28*s,19*s,sleeve,skin,k);
   g.fillStyle=skin;g.save();g.translate(e.tx,e.ty);g.rotate(Math.atan2(e.ty-m2[1],e.tx-m2[0]));g.beginPath();g.ellipse(2*s,0,14*s,11.5*s,0,0,TAU);g.fill();g.restore();
+  return[e.tx,e.ty];                 // where the hand really ended up (an over-long reach stops at arm's length)
 }
+const grip=f=>(f.grip=true,f);         // marks a held thing as gripped in the fist: fingers are drawn closed over it
+function fingers(g,h,s,col,ang=0,w=7.5,l=10.5){g.fillStyle=col;g.save();g.translate(h[0],h[1]);g.rotate(ang);g.beginPath();g.ellipse(1*s,0,w*s,l*s,0,0,TAU);g.fill();g.restore();}
 function drawLeg(g,h,f,col,s,sg,lift){
   const ank=[f[0],f[1]-11*s],e=ik(h[0],h[1],ank[0],ank[1],92*s,90*s,-sg),j=[lerp((h[0]+ank[0])/2,e.ex,.85),lerp((h[1]+ank[1])/2,e.ey,.85)];
   limb(g,h,j,ank,37*s,28*s,col,col);
@@ -792,7 +795,8 @@ function drawCook(g,c,t){
   const flo=(1-m)*1.3*s,hN0=handW(c),hN=[hN0[0]+Math.sin(t*1.1+c.ph)*flo,hN0[1]+Math.sin(t*1.7+c.ph*2)*flo],hF=[c.x+fx*s*c.f[0]+Math.sin(t*.9+c.ph*3)*flo,c.y+s*c.f[1]+Math.sin(t*1.5+c.ph)*flo];   // a held pose is never perfectly still
   const follow=(sh,h)=>{const dx=h[0]-sh[0],dy=h[1]-sh[1],d=Math.hypot(dx,dy)||1,k=Math.min(8*s,d*.07);return[sh[0]+dx/d*k,sh[1]+dy/d*k*.8];};     // the shoulder gives a little toward the hand
   const shN=follow(P(back?40:4,-312),hN),shF=follow(P(back?-40:0,-312),hF);
-  if(!back)drawArm(g,shF,hF,a.jacketD,a.skinD,s,sg);
+  let gF=hF,gN=hN;                  // the hands as drawn; everything held is hung on these, never on the target the arm could not reach
+  if(!back)gF=drawArm(g,shF,hF,a.jacketD,a.skinD,s,sg);
   /* legs: the walk cycle blends in and out of the standing pose */
   const w=c.walk,cN=Math.max(0,Math.cos(w)),cF=Math.max(0,-Math.cos(w));
   const sN=back?[21,0]:[13,0],sF=back?[-21,0]:[-11,0];
@@ -846,14 +850,17 @@ function drawCook(g,c,t){
       g.strokeStyle=a.headCol;g.lineWidth=6*s;g.lineCap='butt';g.beginPath();if(sg>0)g.arc(hc[0],hc[1],r-1,208*DEG,300*DEG);else g.arc(hc[0],hc[1],r-1,-28*DEG,-120*DEG,true);g.stroke();}
   }
   /* carried bowl sits between the hands, in front of the torso */
-  if(c.carry)drawCarry(g,hF[0]+fx*7*s,hF[1]+20*s,c.carry,Math.min(s,1+(s-1)*.35));
+  if(back){const e=ik(shF[0],shF[1],hF[0],hF[1],86*s,84*s,1);gF=[e.tx,e.ty];}
+  if(c.carry)drawCarry(g,gF[0]+fx*7*s,gF[1]+20*s,c.carry,Math.min(s,1+(s-1)*.35));
   if(back)drawArm(g,shF,hF,a.jacket,a.skin,s,hF[1]<shF[1]?-1:1);
-  drawArm(g,shN,hN,a.jacket,a.skin,s,back?(hN[1]<shN[1]?1:-1):sg);
-  drawTool(g,c,hN,sg,s);drawHeld(g,c,hN,s);
-  if(typeof c.holdF==='function')c.holdF(g,hF,s,sg);
-  if(c.holdF==='steel'){g.lineCap='round';g.strokeStyle='#2a2422';g.lineWidth=9*s;ln(g,hF[0],hF[1]+8*s,hF[0]+sg*3*s,hF[1]-8*s);
-    g.strokeStyle='#b9c1c8';g.lineWidth=4.5*s;ln(g,hF[0]+sg*3*s,hF[1]-8*s,hF[0]+sg*22*s,hF[1]-84*s);}
-  if(c.drawFront)c.drawFront(g,hN,s);
+  gN=drawArm(g,shN,hN,a.jacket,a.skin,s,back?(hN[1]<shN[1]?1:-1):sg);
+  /* a tool goes through the closed hand: handle first, then the fingers over it */
+  if(c.tool){drawTool(g,c,gN,sg,s);if(c.tool!=='cloth')fingers(g,gN,s,a.skin,c.toolAng*sg+(sg<0?Math.PI:0));}
+  if(c.hold){drawHeld(g,c,gN,s);if(c.hold.grip||c.hold==='bowl')fingers(g,gN,s,a.skin,0,7,9);}
+  if(typeof c.holdF==='function'){c.holdF(g,gF,s,sg);if(c.holdF.grip)fingers(g,[gF[0],gF[1]+4*s],s,a.skinD,0,7,9);}
+  if(c.holdF==='steel'){g.lineCap='round';g.strokeStyle='#2a2422';g.lineWidth=9*s;ln(g,gF[0],gF[1]+8*s,gF[0]+sg*3*s,gF[1]-8*s);
+    g.strokeStyle='#b9c1c8';g.lineWidth=4.5*s;ln(g,gF[0]+sg*3*s,gF[1]-8*s,gF[0]+sg*22*s,gF[1]-84*s);fingers(g,gF,s,a.skinD,0,7,9);}
+  if(c.drawFront)c.drawFront(g,gN,s);
 }
 /* ── knife rhythms.  Each burst of chopping picks a feel, so it never settles into one tempo. ── */
 function rhythm(K){
@@ -938,7 +945,7 @@ function* hostRounds(c,E){
 /* ── things cooks do for themselves ── */
 function* sipMug(c){          // a drink from their own mug, kept under the counter
   const col=c.A.apron,mug=(g,h,s)=>{g.fillStyle=col;rr(g,h[0]-9*s,h[1]-14*s,20*s,22*s,5*s);g.fill();g.strokeStyle=col;g.lineWidth=3.5*s;g.beginPath();g.arc(h[0]+12*s,h[1]-3*s,6*s,-1.2,1.2);g.stroke();g.fillStyle='rgba(0,0,0,.3)';ell(g,h[0]+1*s,h[1]-13*s,8*s,2.2*s);g.fill();};
-  c.nT=[30,-190];c.leanT=8;yield*sleep(.45);c.hold=mug;c.leanT=0;
+  c.nT=[30,-190];c.leanT=8;yield*sleep(.45);c.hold=grip(mug);c.leanT=0;
   for(let i=0;i<RI(1,2);i++){c.nT=[40,-250];yield*sleep(R(.5,1.1));c.nT=[36,-352];c.lookY=-3;yield*sleep(R(.9,1.5));c.lookY=0;}
   c.nT=[40,-250];c.look=R(-3,5);yield*sleep(R(.6,1.4));c.look=0;
   c.nT=[30,-190];c.leanT=8;yield*sleep(.45);c.hold=null;SFX.clink(panX(c.x),.3);c.leanT=0;
@@ -1131,7 +1138,7 @@ function* hostDeliv(c,E){
 function* hostBday(c,E){
   const W=E.W,B=W.bday,list=E.cooks.filter(k=>k.home&&Math.abs(k.y-WORK_Y)<4);if(!list.length){W.bday=null;return;}
   const k=B.who=pick(list);B.st='walk';B.lit=true;
-  c.hold=(g,h,s)=>cupcake(g,h[0]+6*s,h[1]-10*s,s,B.lit,performance.now()/1000);c.nT=[52,-262];c.carry={draw(){}};c.fT=[14,-180];
+  c.hold=grip((g,h,s)=>cupcake(g,h[0]+6*s,h[1]-4*s,s,B.lit,performance.now()/1000));c.nT=[52,-262];c.carry={draw(){}};c.fT=[14,-180];
   let x=k.x-k.face*110;yield*walkTo(c,clamp(x,80,1840),k.face,true);
   let w=0;while(B.st!=='ready'&&w<40){w+=yield;}
   if(B.st==='ready'){x=clamp(k.x+B.side*112,80,1840);yield*walkTo(c,x,-B.side,true);c.leanT=6;c.nT=[74,-272];yield*sleep(.6);
@@ -1157,7 +1164,7 @@ function* hostLife(c,E){
     let w=R(30,60);while(w>0&&!(W&&(W.meal&&!W.meal.host||W.bday&&W.bday.st==='call'||W.deliv&&W.deliv.st==='call')))w-=yield;
   }
 }
-const cupToGo=(g,h,s)=>{g.fillStyle='#efe6d2';g.beginPath();g.moveTo(h[0]-8*s,h[1]-22*s);g.lineTo(h[0]+10*s,h[1]-22*s);g.lineTo(h[0]+7*s,h[1]+6*s);g.lineTo(h[0]-5*s,h[1]+6*s);g.fill();g.fillStyle='#8a5a3c';g.fillRect(h[0]-7*s,h[1]-14*s,16*s,9*s);g.fillStyle='#3a2a22';rr(g,h[0]-10*s,h[1]-26*s,22*s,5*s,2*s);g.fill();};
+const cupToGo=grip((g,h,s)=>{g.fillStyle='#efe6d2';g.beginPath();g.moveTo(h[0]-8*s,h[1]-22*s);g.lineTo(h[0]+10*s,h[1]-22*s);g.lineTo(h[0]+7*s,h[1]+6*s);g.lineTo(h[0]-5*s,h[1]+6*s);g.fill();g.fillStyle='#8a5a3c';g.fillRect(h[0]-7*s,h[1]-14*s,16*s,9*s);g.fillStyle='#3a2a22';rr(g,h[0]-10*s,h[1]-26*s,22*s,5*s,2*s);g.fill();});
 function cupcake(g,x,y,s,lit,t){
   g.fillStyle='#c9a25a';g.beginPath();g.moveTo(x-11*s,y);g.lineTo(x+11*s,y);g.lineTo(x+8*s,y+15*s);g.lineTo(x-8*s,y+15*s);g.fill();
   g.fillStyle='#f6d9df';ell(g,x,y-2*s,13*s,8*s);g.fill();ell(g,x,y-9*s,8*s,6*s);g.fill();
@@ -1169,7 +1176,7 @@ function cupcake(g,x,y,s,lit,t){
 function* hello(c,x,win){      // looks up, nods, and lifts a hand (or their mug) your way
   c.face=x>c.x?1:-1;c.leanT=-2;yield*sleep(.45);c.lookY=5;c.leanT=6;yield*sleep(.4);c.lookY=0;c.leanT=0;yield*sleep(.15);
   if(!win&&R()<.4){const col=c.A.apron;c.nT=[30,-190];c.leanT=8;yield*sleep(.4);c.leanT=0;
-    c.hold=(g,h,s)=>{g.fillStyle=col;rr(g,h[0]-9*s,h[1]-14*s,20*s,22*s,5*s);g.fill();g.strokeStyle=col;g.lineWidth=3.5*s;g.beginPath();g.arc(h[0]+12*s,h[1]-3*s,6*s,-1.2,1.2);g.stroke();};
+    c.hold=grip((g,h,s)=>{g.fillStyle=col;rr(g,h[0]-9*s,h[1]-14*s,20*s,22*s,5*s);g.fill();g.strokeStyle=col;g.lineWidth=3.5*s;g.beginPath();g.arc(h[0]+12*s,h[1]-3*s,6*s,-1.2,1.2);g.stroke();});
     c.nT=[66,-360];yield*sleep(.9);c.nO[1]=-10;yield*sleep(.25);c.nO[1]=0;yield*sleep(.5);c.nT=[30,-190];c.leanT=8;yield*sleep(.45);c.hold=null;c.leanT=0;}
   else{c.nT=[38,-412];yield*sleep(.3);for(let i=0;i<(win?4:3);i++){c.nO[0]=12;yield*sleep(.16);c.nO[0]=-6;yield*sleep(.16);}c.nO[0]=0;}
   restArms(c);yield*sleep(.3);
@@ -1191,7 +1198,7 @@ function* mealJoin(c,W){       // family meal: everyone comes round to the front
   c.leanT=10;c.nT=[30,-190];c.fT=[24,-190];yield*sleep(.5);c.leanT=0;
   c.carry={draw:(g,x,y,s)=>foodShape(g,F,x,y+4*s,60*s,1)};c.nT=[56,-262];c.fT=[42,-260];
   yield*walkTo(c,spot.x,spot.x<Y.x?1:-1,false,Y.frontY);
-  let lvl=1;c.carry=null;c.fT=[52,-236];c.holdF=(g,h,s,sg)=>foodShape(g,F,h[0]+sg*8*s,h[1]+16*s,56*s,lvl);c.tool=F.tool;c.toolAng=c.toolAngT=1;c.nT=[56,-272];yield*sleep(.5);
+  let lvl=1;c.carry=null;c.fT=[52,-236];c.holdF=grip((g,h,s,sg)=>foodShape(g,F,h[0]+sg*8*s,h[1]+16*s,56*s,lvl));c.tool=F.tool;c.toolAng=c.toolAngT=1;c.nT=[56,-272];yield*sleep(.5);
   while(W.meal===M&&M.t<M.dur){const r=R();
     if(r<.55){c.nT=[54,-258];c.toolAngT=1.2;yield*sleep(R(.45,.7));if(R()<.3)SFX.clink(panX(c.x),.22);
       c.nT=[84,-362];c.toolAngT=2.9;c.lookY=3;yield*sleep(R(.6,.9));c.lookY=0;lvl=Math.max(.12,lvl-.07);c.nT=[58,-272];c.toolAngT=1;yield*sleep(R(.7,1.7));}
@@ -1227,7 +1234,7 @@ function* bdayGuest(c,W){      // someone's birthday: turn round, blow the candl
   c.nT=[40,-330];c.fT=[30,-326];yield*sleep(.7);c.nT=[30,-215];c.fT=[16,-198];                 // hands up: for me?
   c.leanT=14;c.lookY=5;yield*sleep(.7);B.st='blown';SFX.cloth(panX(c.x));yield*sleep(.5);c.leanT=0;c.lookY=0;
   w=0;while(W.bday===B&&B.st!=='give'&&w<4)w+=yield;
-  c.nT=[70,-272];yield*sleep(.3);c.hold=(g,hh,s)=>cupcake(g,hh[0]+6*s,hh[1]-10*s,s,false,0);c.nT=[50,-268];yield*sleep(1.2);
+  c.nT=[70,-272];yield*sleep(.3);c.hold=grip((g,hh,s)=>cupcake(g,hh[0]+6*s,hh[1]-4*s,s,false,0));c.nT=[50,-268];yield*sleep(1.2);
   c.nT=[40,-350];c.lookY=3;yield*sleep(.9);c.lookY=0;c.nT=[50,-268];yield*sleep(.8);        // a bite
   c.nT=[30,-190];c.leanT=8;yield*sleep(.45);c.hold=null;c.leanT=0;
 }
@@ -1385,7 +1392,7 @@ function drawRack(g,RK){
 function* seasonFrom(c,RK,W,jar,T){     // T: where to shake it (defaults to the work in front of the cook)
   const f0=c.face,d=jar.x>c.x?1:-1,E=W.E;c.face=d;c.leanT=3;yield*sleep(d===f0?.15:.4);
   c.leanT=9;reach(c,jar.x,RK.y-15);yield*sleep(.62);
-  let tilt=0;jar.out=true;SFX.tink(panX(jar.x));c.hold=(g,h,s)=>drawJar(g,h[0]+4*s,h[1]+13*s,jar,s,tilt*(c.fa<0?-1:1));
+  let tilt=0;jar.out=true;SFX.tink(panX(jar.x));c.hold=grip((g,h,s)=>drawJar(g,h[0]+4*s,h[1]+13*s,jar,s,tilt*(c.fa<0?-1:1)));
   c.leanT=4;c.nT=[52,-262];yield*sleep(.35);c.face=f0;yield*sleep(d===f0?.1:.4);
   const tx=T?T.x:c.x+f0*74*c.s,ty=T?T.y:c.y-292*c.s,end=T?T.end:E.ct||600;
   c.leanT=10;reach(c,tx,ty);yield*sleep(.5);tilt=2.5;yield*sleep(.2);
