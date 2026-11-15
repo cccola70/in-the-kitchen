@@ -864,7 +864,7 @@ function drawCook(g,c,t){
 }
 /* ── knife rhythms.  Each burst of chopping picks a feel, so it never settles into one tempo. ── */
 function rhythm(K){
-  const p=1/R(K.rate[0],K.rate[1]),n=RI(K.n[0],K.n[1]),out=[];
+  const p=1.18/R(K.rate[0],K.rate[1]),n=RI(K.n[0],K.n[1]),out=[];        // 1.18: an unhurried working pace
   if(K.slow){for(let i=0;i<n;i++)out.push({iv:p*R(.9,1.15),acc:1});return out;}
   const kind=pick(['steady','steady','accel','decel','triplet','gallop','double','rock']),m=Math.max(1,n-1);
   for(let i=0;i<n;i++){let iv,acc;
@@ -1260,7 +1260,7 @@ function mkWarm(E){
   const W={E,age:0,meal:null,mealT:900,rush:false,rushT:R(200,320),rushLeft:0,rushId:0,lullT:0,tk:0,helloT:R(40,80),treatT:R(140,220),teachT:R(100,200),
     bday:null,bdayT:R(1240,1600),deliv:null,delivT:R(240,400),visitor:V,reg:null,regT:R(100,180),wave:null,foh:null,fohT:R(60,110),fohWant:false,
     cat:E.cat?{st:'shelf',t:R(420,700),k:0}:null,purrT:0,wisps:[],sparks:[],grains:[],seasonT:R(15,30),em:{},
-    spots:(E.spots||[630,1220,440,1400,1580,250,1760]).map(x=>({x,c:null}))};
+    spots:(E.spots||[630,1220,440,1530,250,1700,1850]).map(x=>({x,c:null}))};
   E.W=W;V.s=V.A.h;V.y=V.lane;
   V.box={draw:(g,x,y,s)=>{g.fillStyle='#b98a5a';rr(g,x-36*s,y-44*s,72*s,48*s,4*s);g.fill();g.fillStyle='#a37848';g.fillRect(x-36*s,y-24*s,72*s,4*s);g.fillStyle='#d9c08a';g.fillRect(x-7*s,y-44*s,14*s,48*s);
     g.fillStyle='#6f9a52';ell(g,x-14*s,y-46*s,12*s,7*s);g.fill();ell(g,x+12*s,y-48*s,11*s,8*s);g.fill();g.fillStyle='#e0703a';ell(g,x+2*s,y-45*s,7*s,5*s);g.fill();}};
@@ -1330,7 +1330,7 @@ function mkWarm(E){
     if(W.deliv&&W.deliv.st==='call'&&(W.deliv.age=(W.deliv.age||0)+dt)>150)W.deliv=null;
     if((W.fohT-=dt)<0&&!W.foh){W.fohT=R(200,380);W.fohWant=true;}
     if(E.win){const Rg=W.reg,w=E.win;
-      if(!Rg){if((W.regT-=dt)<0){W.regT=R(300,520);const dir=R()<.5?1:-1;W.reg={x:dir>0?w.x-60:w.x+w.w+60,dir,st:'walk',stop:w.x+w.w*R(.35,.65),t:0,ph:0,done:false};}}
+      if(!Rg){if((W.regT-=dt)<0){W.regT=R(170,300);const dir=R()<.5?1:-1;W.reg={x:dir>0?w.x-60:w.x+w.w+60,dir,st:'walk',stop:w.x+w.w*R(.35,.65),t:0,ph:0,done:false};}}
       else if(Rg.st==='walk'){Rg.x+=Rg.dir*46*dt;Rg.ph+=dt*5.5;if(!Rg.done&&(Rg.stop-Rg.x)*Rg.dir<=0){Rg.st='turn';Rg.t=0;}if(Rg.x<w.x-70||Rg.x>w.x+w.w+70)W.reg=null;}
       else if(Rg.st==='turn'){if((Rg.t+=dt)>.8){Rg.st='wave';Rg.t=0;W.wave={x:w.cx==null?w.x+w.w/2:w.cx,t:0,taken:false};}}
       else{if((Rg.t+=dt)>5.5){Rg.st='walk';Rg.done=true;W.wave=null;}}}
@@ -1847,7 +1847,7 @@ SCENES.ramen=function(){
   const FRONT_Y=1100,FY=956;
   const STOCK={onion:2,ginger:2,chashu:2,egg:2},SX={onion:190,ginger:270,chashu:350,egg:430};   // fresh prep: up to 3 tubs each
   const DONE=[];                                    // tubs of cut product waiting to be taken away (their colours), up to 6
-  const FB=[{x:1300,n:6},{x:1384,n:7}];             // clean bowls: up to 8 per stack
+  const FB=[{x:1620,n:6},{x:1704,n:7}];             // clean bowls: up to 8 per stack
   const ITEMS={boardA:['onion','ginger'],boardB:['chashu','egg']},ALT={onion:'ginger',ginger:'onion',chashu:'chashu',egg:'chashu'};
   const doneSpot=i=>[590+(i%2)*84,FY-Math.floor(i/2)*26];
   function drawTub(g,x,by,col){g.fillStyle='#727c87';rr(g,x-32,by-24,64,24,4);g.fill();g.fillStyle='#9aa3ad';rr(g,x-35,by-28,70,8,3);g.fill();if(col){g.fillStyle=col;ell(g,x,by-26,27,5);g.fill();}}
@@ -2174,7 +2174,7 @@ SCENES.ramen=function(){
       ...cooks.filter(c=>c.flame>0).map(c=>{const q=toolTip(c,64);return{x:q[0],y:q[1]+18,w:30,k:1,fry:1.3,smoke:1.6,glow:.8};})]};
   host.s=host.A.h;host.script=hostLife(host,ENV);cooks.push(host);
   ENV.rack=mkRack(724,884,464,6,{wood:'#4a332b'});ENV.ct=596;
-  let T_=0;ENV.tick=(dt,t)=>{T_=t;BIRDS.step(dt);};ENV.front=(g,t)=>drawFishBowl(g,1640,FY,t);
+  let T_=0;ENV.tick=(dt,t)=>{T_=t;BIRDS.step(dt);};ENV.front=(g,t)=>drawFishBowl(g,1296,FY,t);
   const WARM=mkWarm(ENV),rainK=()=>.66+.34*Math.sin(WARM.age*TAU/1400+1.25);       // the rain eases off and comes back over about twenty-five minutes
 
   /* ── front of house: a server collects bowls from the dining side of the pass; guests move about ── */
@@ -2514,7 +2514,7 @@ SCENES.diner=function(){
   const EM=[0,0,0];function emit(i,rate,dt,fn){EM[i]+=rate*dt;while(EM[i]>1){EM[i]--;fn();}}
 
   /* ── front stock, handling helpers ── */
-  const TUB={veg:'#d2553f',ham:'#e59a9a'},STOCK={veg:2,ham:2},SX={veg:210,ham:300},DONE=[],FB=[{x:1300,n:7},{x:1384,n:8}];
+  const TUB={veg:'#d2553f',ham:'#e59a9a'},STOCK={veg:2,ham:2},SX={veg:210,ham:300},DONE=[],FB=[{x:1620,n:7},{x:1704,n:8}];
   const ITEMS={boardA:['veg'],boardB:['ham']};
   const doneSpot=i=>[590+(i%2)*84,FY-Math.floor(i/2)*26],plates=()=>FB[0].n+FB[1].n;
   function drawTub(g,x,by,col){g.fillStyle='#8a939b';rr(g,x-32,by-24,64,24,4);g.fill();g.fillStyle='#c9d1d6';rr(g,x-35,by-28,70,8,3);g.fill();if(col){g.fillStyle=col;ell(g,x,by-26,27,5);g.fill();}}
@@ -2816,7 +2816,7 @@ SCENES.diner=function(){
     if(D.st==='down'){D.k=Math.max(0,D.k-dt/.7);if(D.t<0||(busy&&D.k<=0&&D.t<40)){D.st='up';D.t=R(9,17);D.sub=0;}}
     else{D.k=Math.min(1,D.k+dt/.6);if((D.sub-=dt)<0){D.sub=R(1.2,3);D.tilt=pick([0,0,1,-1,.6]);D.pant=R()<.45;}
       D.ear+=((busy?1:0)-D.ear)*Math.min(1,dt*6);if(busy)D.t=Math.max(D.t,2.5);if(D.t<0){D.st='down';D.t=R(35,80);D.tilt=0;D.pant=false;}}};
-  ENV.dog=DOG;ENV.front=(g,t)=>drawSeatDog(g,1236,t,DOG);
+  ENV.dog=DOG;ENV.front=(g,t)=>drawSeatDog(g,1262,t,DOG);
 
   /* ── front of house: the server collects plates, pours coffee and tops up the syrup; guests come and go ── */
   const SEATS=[[1612,528],[1668,534],[1722,528],[1778,534],[1832,528]].map(([x,y])=>({sx:x,y,x,sit:1,st:'sit',t:R(12,70),eat:R(1,6),dip:0,dir:1,ph:R(TAU)}));
@@ -3092,7 +3092,7 @@ SCENES.bistro=function(){
   const EM=[0,0,0];function emit(i,rate,dt,fn){EM[i]+=rate*dt;while(EM[i]>1){EM[i]--;fn();}}
 
   /* ── front stock and handling helpers ── */
-  const TUB={garlic:'#efe6cc',herb:'#5f9a4e',shallot:'#c98aa0'},STOCK={garlic:2,herb:2,shallot:2},SX={garlic:190,herb:270,shallot:350},DONE=[],FB=[{x:1300,n:7},{x:1384,n:8}];
+  const TUB={garlic:'#efe6cc',herb:'#5f9a4e',shallot:'#c98aa0'},STOCK={garlic:2,herb:2,shallot:2},SX={garlic:190,herb:270,shallot:350},DONE=[],FB=[{x:1620,n:7},{x:1704,n:8}];
   const ITEMS={boardA:['garlic','herb'],boardB:['shallot']},ALT={garlic:'herb',herb:'garlic',shallot:'shallot'};
   const doneSpot=i=>[590+(i%2)*84,FY-Math.floor(i/2)*26],plates=()=>FB[0].n+FB[1].n;
   function drawTub(g,x,by,col){g.fillStyle='#727c87';rr(g,x-32,by-24,64,24,4);g.fill();g.fillStyle='#9aa3ad';rr(g,x-35,by-28,70,8,3);g.fill();if(col){g.fillStyle=col;ell(g,x,by-26,27,5);g.fill();}}
@@ -3353,8 +3353,8 @@ SCENES.bistro=function(){
   const WARM=mkWarm(ENV);
   ENV.rack=mkRack(652,812,458,6,{wood:'#3a2a22'});ENV.ct=CT;ENV.hang=[[352,326,'garlic'],[430,326,'herbs'],[506,326,'chili'],[566,326,'herbs']];
   /* on the front counter: a cockatiel on its perch, and a kitten asleep in a bread basket that wakes now and then to watch it */
-  ENV.front=(g,t)=>{drawCockatiel(g,1650,FY,t,{dance:radioOn&&Music.on,bpm:Music.sec?Music.sec.bpm:80});
-    const bx=1836,by=FY;g.fillStyle='rgba(0,0,0,.25)';ell(g,bx,by+2,74,8);g.fill();g.fillStyle='#8a6238';rr(g,-70+bx,by-40,140,42,14);g.fill();g.fillStyle='#efe6d2';ell(g,bx,by-38,62,10);g.fill();
+  ENV.front=(g,t)=>{drawCockatiel(g,1452,FY,t,{dance:radioOn&&Music.on,bpm:Music.sec?Music.sec.bpm:80});
+    const bx=1272,by=FY;g.fillStyle='rgba(0,0,0,.25)';ell(g,bx,by+2,74,8);g.fill();g.fillStyle='#8a6238';rr(g,-70+bx,by-40,140,42,14);g.fill();g.fillStyle='#efe6d2';ell(g,bx,by-38,62,10);g.fill();
     g.save();g.translate(bx+4,by-30);g.scale(1.45,1.45);drawCat(g,0,0,t+17,'#8f8a86');g.restore();
     g.fillStyle='#a87a48';rr(g,bx-70,by-30,140,32,14);g.fill();g.strokeStyle='#8a6238';g.lineWidth=3;for(let i=0;i<6;i++)ln(g,bx-56+i*22,by-28,bx-50+i*22,by-2);g.fillStyle='#c9a06a';rr(g,bx-74,by-36,148,9,4.5);g.fill();};
 
@@ -3546,6 +3546,7 @@ SCENES.bakery=function(){
     const{x:X,y:Y,w,h}=WIN;g.save();g.beginPath();g.rect(X,Y,w,h);g.clip();
     {const k=clamp(WARM.age/3000,0,1);if(k>0){g.fillStyle=lg(g,0,Y,0,Y+h,0,`rgba(96,110,170,${.3*k})`,.55,`rgba(240,150,120,${.42*k})`,1,`rgba(255,196,128,${.6*k})`);g.fillRect(X,Y,w,h);}}       // dawn comes up behind the snow over the first fifty minutes
     BIRDS.draw(g,t);
+    for(const q of WALK)if(q.wait<=0){drawRegular(g,q,Y+h+6,q.k,q.col,t,false);g.fillStyle=q.scarf;g.fillRect(q.x-15*q.k,Y+h+6-122*q.k+Math.sin(q.ph)*2*q.k,30*q.k,8*q.k);}
     if(WARM.reg)drawRegular(g,WARM.reg,Y+h+6,1,'#75606c',WARM.age,false);
     g.fillStyle='rgba(240,246,255,.9)';
     for(const f of flakes){ell(g,f.x+Math.sin(t*.8+f.ph)*10,f.y,f.r,f.r);g.fill();}
@@ -3605,7 +3606,7 @@ SCENES.bakery=function(){
   const EM=[0,0];function emit(i,rate,dt,fn){EM[i]+=rate*dt;while(EM[i]>1){EM[i]--;fn();}}
 
   /* ── front stock and handling helpers ── */
-  const TUB={nuts:'#b98a5a',choc:'#4a2c1e',dough:'#ead9b8',pastry:'#e6cf8a'},STOCK={nuts:2,choc:2,dough:2,pastry:2},SX={nuts:190,choc:270,dough:350,pastry:430},DONE=[],FT={x:1300,n:5};
+  const TUB={nuts:'#b98a5a',choc:'#4a2c1e',dough:'#ead9b8',pastry:'#e6cf8a'},STOCK={nuts:2,choc:2,dough:2,pastry:2},SX={nuts:190,choc:270,dough:350,pastry:430},DONE=[],FT={x:1640,n:5};
   const ALT={nuts:'choc',choc:'nuts'},doneSpot=i=>[590+(i%2)*84,FY-Math.floor(i/2)*26];
   function drawTub(g,x,by,col){g.fillStyle='#727c87';rr(g,x-32,by-24,64,24,4);g.fill();g.fillStyle='#9aa3ad';rr(g,x-35,by-28,70,8,3);g.fill();if(col){g.fillStyle=col;ell(g,x,by-26,27,5);g.fill();}}
   function drawStock(g){for(const k in STOCK)for(let i=0;i<STOCK[k];i++)drawTub(g,SX[k],FY-i*26,TUB[k]);DONE.forEach((col,i)=>{const p=doneSpot(i);drawTub(g,p[0],p[1],col);});for(let i=0;i<FT.n;i++)trayShape(g,FT.x,FY-2-i*7);}
@@ -3859,7 +3860,7 @@ SCENES.bakery=function(){
   runner.s=runner.A.h;runner.script=runnerLife(runner);cooks.push(runner);
   const YOU=mkYou({frontY:FRONT_Y,cupKind:'cocoa',cupCol:'#b5543c',liq:'#6a3a22',treatKind:'croissant',mat:'#efe6d2'});
   const host=mkCook({lane:944,A:look({jacket:'#b97a6a',apron:'#f1ece0',bib:1,head:'bun',headCol:'#efe6d2',hair:'#d9d3c6',skin:'#e6b48e',pants:'#3a3440',h:.94})});
-  const ENV={YOU,cooks,host,puff,enter:2090,pot:'pot',call:'pot',passPan:.5,win:WIN,cat:true,catFront:[1500,952],catCol:'#c98a4a',
+  const ENV={YOU,cooks,host,puff,enter:2090,pot:'pot',call:'pot',passPan:.5,win:WIN,cat:true,catFront:[1300,952],catCol:'#c98a4a',
     food:{kind:'plate',col:'#efe6d2',rim:'#e1d6bc',food:['#d9a052','#b97a34','#e6cf8a'],tool:null},
     visitor:look({jacket:'#7a5a8a',apron:'#5f456d',head:'cap',headCol:'#3a2f4a',hair:'#2a1d18',skin:'#e2b28c',pants:'#33303a',h:1.02}),
     heat:()=>[{x:1746,y:OV.uy,w:120,k:.55+.45*OVEN.dU,smoke:.25,glow:1},{x:1746,y:OV.ly,w:120,k:.55+.45*OVEN.dL,smoke:.25,glow:1},
@@ -3870,8 +3871,13 @@ SCENES.bakery=function(){
   /* a mouse comes along the far end of the counter for crumbs; it only peeks if the cat is over here */
   ENV.rack=mkRack(1062,1222,530,6,{wood:'#6a4a34'});ENV.ct=CT;
   const MOUSE={st:'hide',t:R(20,40),x:1975,tx:0,dir:-1};
-  ENV.tick=(dt)=>{BIRDS.step(dt);const M=MOUSE,cat=WARM.cat&&['up','front','off'].includes(WARM.cat.st);M.t-=dt;
-    if(M.st==='hide'){if(M.t<0){M.st='out';M.tx=cat?1900:R(1700,1800);M.dir=-1;M.peek=cat;}}
+  /* early risers going by outside, bundled up */
+  const WALK=[0,1,2].map(i=>({x:0,dir:1,v:0,wait:R(2,12)+i*8,ph:R(TAU),st:'walk',k:1,col:'#5d566e',scarf:'#b5543c'}));
+  ENV.tick=(dt)=>{BIRDS.step(dt);
+    for(const q of WALK){if(q.wait>0){if((q.wait-=dt)<=0){q.dir=R()<.5?1:-1;q.x=q.dir>0?WIN.x-70:WIN.x+WIN.w+70;q.v=R(30,52);q.k=R(.86,1.04);q.col=pick(['#5d566e','#66607a','#4f5a70','#6e5a60']);q.scarf=pick(['#b5543c','#c9a25a','#5f8a7a','#d9cdb4']);}continue;}
+      q.x+=q.dir*q.v*dt;q.ph+=dt*q.v*.11;if(q.x<WIN.x-80||q.x>WIN.x+WIN.w+80)q.wait=R(7,26);}
+    const M=MOUSE,cat=WARM.cat&&['up','front','off'].includes(WARM.cat.st);M.t-=dt;
+    if(M.st==='hide'){if(M.t<0){M.st='out';M.tx=cat?1900:R(1450,1540);M.dir=-1;M.peek=cat;}}
     else if(M.st==='out'){M.x=Math.max(M.tx,M.x-(M.peek?90:300)*dt);if(cat&&!M.peek){M.st='back';M.dir=1;}else if(M.x<=M.tx){M.st='nib';M.t=M.peek?R(1,2):R(3,7);}}
     else if(M.st==='nib'){if(M.t<0||(cat&&!M.peek)){M.st='back';M.dir=1;}}
     else{M.x+=420*dt;if(M.x>=1975){M.x=1975;M.st='hide';M.t=R(40,95);}}};
