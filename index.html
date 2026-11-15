@@ -1289,7 +1289,7 @@ function mkWarm(E){
     W.foh=null;c.lookY=0;c.leanT=0;restArms(c);yield*sleep(.3);};
   const emit=(k,rate,dt,fn)=>{W.em[k]=(W.em[k]||0)+rate*dt;while(W.em[k]>1){W.em[k]--;fn();}};
   W.step=(dt,t)=>{
-    stepYou(Y,dt,E.puff);
+    stepYou(Y,dt,E.puff);if(E.tick)E.tick(dt,t);
     /* smoke, spatter and firelight at whatever is hot right now */
     W.hot=E.heat?E.heat():[];
     W.hot.forEach((h,i)=>{
@@ -1344,12 +1344,129 @@ function mkWarm(E){
     else if(C.st==='home'){const k=1-C.k;drawCatLeap(g,x+k*70,y-18-Math.sin(Math.PI*Math.min(1,k*1.2))*40+k*k*230,-1,col,true);}};
   /* the viewer's place, and the cat if it has come over */
   W.front=(g,t)=>{
+    if(E.front)E.front(g,t);
     const C=W.cat;
     if(C&&E.catFront){const[cx,cy]=E.catFront,col=E.catCol||'#c98a4a';
       if(C.st==='front'){g.save();g.translate(cx,cy);g.scale(-2.1,2.1);drawCat(g,0,0,t,col);g.restore();}
       else if(C.st==='up'||C.st==='off'){const k=C.st==='up'?C.k:1-C.k;g.save();g.translate(cx+(1-k)*60,cy-40-Math.sin(Math.PI*k*.9)*70+(1-k)*(1-k)*260);g.scale(2.1,2.1);drawCatLeap(g,0,0,-1,col,C.st==='up');g.restore();}}
     drawYou(g,Y,t);};
   return W;
+}
+/* ───────────────────────── 4c. ANIMALS ─────────────────────────
+   Small lives around the edges of each room: birds on a wire outside, a cat on the sill, goldfish, a dog by the
+   viewer's seat, a cockatiel that bobs to the music, moths round the lamps, a mouse after crumbs. */
+function mkBirds(WIN,wireY,cols,o={}){
+  const B=cols.map((col,i)=>({x:WIN.x+WIN.w*([.32,.41,.68,.8][i]||R(.2,.8)),x0:0,x1:0,dir:i%2?1:-1,st:'sit',t:R(2,9),k:0,col}));
+  const calm=()=>B.every(q=>q.st==='sit'||q.st==='hop'||q.st==='fluff');
+  return{list:B,
+    step(dt){
+      for(const b of B){b.t-=dt;
+        if(b.st==='sit'){if(b.t<0){const r=R(),free=x=>x>WIN.x+30&&x<WIN.x+WIN.w-30&&B.every(q=>q===b||Math.abs((q.st==='hop'?q.x1:q.x)-x)>24);
+            if(r<.4){const nx=b.x+pick([-1,1])*R(14,40);if(free(nx)){b.st='hop';b.x0=b.x;b.x1=nx;b.dir=nx>b.x?1:-1;b.k=0;if(R()<.25)SFX.chirp(panX(b.x)-.2);}else b.t=R(1,3);}
+            else if(r<.65){b.st='fluff';b.t=R(.7,1.1);if(R()<.3)SFX.chirp(panX(b.x)-.2);}
+            else if(r<.87){b.dir=-b.dir;b.t=R(2,7);}
+            else if(calm()){b.st='leave';b.k=0;b.x0=b.x;b.dir=b.x>WIN.x+WIN.w/2?1:-1;}
+            else b.t=R(2,5);}}
+        else if(b.st==='hop'){b.k+=dt/.28;b.x=lerp(b.x0,b.x1,Math.min(1,b.k));if(b.k>=1){b.st='sit';b.t=R(2,8);}}
+        else if(b.st==='fluff'){if(b.t<0){b.st='sit';b.t=R(3,9);}}
+        else if(b.st==='leave'){b.k+=dt/1.5;if(b.k>=1){b.st='gone';b.t=R(9,26);}}
+        else if(b.st==='gone'){if(b.t<0){let nx=0,n=0;do{nx=WIN.x+R(40,WIN.w-40);}while(n++<20&&B.some(q=>q!==b&&Math.abs(q.x-nx)<26));b.x0=b.x=nx;b.dir=nx>WIN.x+WIN.w/2?-1:1;b.st='come';b.k=0;}}
+        else{b.k+=dt/1.5;if(b.k>=1){b.st='sit';b.t=R(2,7);}}}
+    },
+    draw(g,t){
+      g.strokeStyle=o.wire||'rgba(12,14,24,.9)';g.lineWidth=o.thick||1.6;g.lineCap='round';g.beginPath();for(let x=WIN.x;x<=WIN.x+WIN.w;x+=30)x===WIN.x?g.moveTo(x,wireY(x)):g.lineTo(x,wireY(x));g.stroke();
+      if(o.snow){g.strokeStyle='rgba(240,246,255,.9)';g.lineWidth=3;g.beginPath();for(let x=WIN.x;x<=WIN.x+WIN.w;x+=30)x===WIN.x?g.moveTo(x,wireY(x)-o.thick/2):g.lineTo(x,wireY(x)-o.thick/2);g.stroke();}
+      const top=(o.thick||1.6)/2+(o.snow?2:0);
+      for(const b of B){if(b.st==='gone')continue;
+        let x=b.x,y=wireY(b.x)-top,fly=0,sc=1,wob=0;
+        if(b.st==='hop')y-=Math.sin(Math.PI*Math.min(1,b.k))*7;
+        else if(b.st==='fluff'){sc=1.22;wob=Math.sin(t*46)*1.3;}
+        else if(b.st==='leave'||b.st==='come'){const k=ease(b.st==='leave'?b.k:1-b.k);x=b.x0+b.dir*(b.st==='leave'?1:-1)*k*(WIN.w*.7);y=wireY(b.x0)-top-k*150-Math.sin(Math.PI*k)*20;fly=1;}
+        g.save();g.translate(x+wob,y);g.scale(b.dir,1);g.fillStyle=b.col;g.strokeStyle=b.col;g.lineCap='round';
+        if(!fly){g.lineWidth=1.3;ln(g,-2,-2,-2,1);ln(g,2,-2,2,1);}
+        g.lineWidth=3;ln(g,-6*sc,-6,-14,-2+(fly?-3:0));
+        ell(g,0,-8,8.5*sc,6.6*sc);g.fill();ell(g,6.5,-14-(sc-1)*4,4.6,4.4);g.fill();
+        if(o.breast){g.fillStyle=o.breast;ell(g,3.5,-7,5*sc,4.6*sc);g.fill();g.fillStyle=b.col;}
+        g.beginPath();g.moveTo(10.5,-15);g.lineTo(14.5,-13.6);g.lineTo(10.5,-12.6);g.fill();
+        if(fly){const w=Math.sin(t*26);g.lineWidth=3.4;g.beginPath();g.moveTo(-1,-10);g.quadraticCurveTo(-5,-16-w*10,-11,-12-w*14);g.stroke();}
+        g.restore();}
+    }};
+}
+function drawSillCat(g,x,y,t,col){      // a cat sitting outside on the sill, out of the rain: watches the birds, bats at a raindrop on the glass
+  const u=t%38,win=(a,b,k)=>u>a&&u<b?Math.min(1,Math.sin(Math.PI*(u-a)/(b-a))*k):0,up=win(6,14,3),paw=win(21,25,3),tw=Math.sin(t*.53)>.96?-3:0;
+  g.fillStyle=col;g.strokeStyle=col;g.lineCap='round';
+  g.lineWidth=7;g.beginPath();g.moveTo(x-16,y-6);g.quadraticCurveTo(x-40,y-4,x-42+Math.sin(t*1.9)*7,y-30-Math.sin(t*1.9+1)*4);g.stroke();     // tail, swishing
+  ell(g,x,y-22,20,25);g.fill();ell(g,x+7,y-10,17,12);g.fill();
+  if(paw>0){g.lineWidth=7;ln(g,x+14,y-28,x+30,y-46-paw*8+Math.sin(t*11)*4);}
+  const hx=x+9-up*5,hy=y-55-up*5;ell(g,hx,hy,13.5,12);g.fill();
+  g.beginPath();g.moveTo(hx-11,hy-6);g.lineTo(hx-9-up*3,hy-21+tw);g.lineTo(hx-1,hy-10);g.fill();g.beginPath();g.moveTo(hx+2,hy-10);g.lineTo(hx+8-up*3,hy-22);g.lineTo(hx+12,hy-6);g.fill();
+  g.fillStyle='rgba(255,220,150,.75)';ell(g,hx+7-up*2,hy-1-up*3,1.6,2);g.fill();                                                                    // an eye catching the shop light
+}
+function drawFishBowl(g,x,y,t){         // two goldfish on the counter
+  const r=60,cy=y-r+7;
+  g.fillStyle='rgba(0,0,0,.25)';ell(g,x,y+2,r*.78,7);g.fill();
+  g.save();g.beginPath();g.arc(x,cy,r,0,TAU);g.clip();
+  g.fillStyle='rgba(150,190,205,.16)';g.fillRect(x-r,cy-r,2*r,2*r);
+  const wl=cy-r*.56+Math.sin(t*1.3)*1.2;g.fillStyle='rgba(96,160,186,.5)';g.fillRect(x-r,wl,2*r,2*r);g.fillStyle='rgba(215,240,250,.5)';g.fillRect(x-r,wl,2*r,2);
+  g.fillStyle='#c9b38a';ell(g,x,cy+r-3,r*.82,13);g.fill();g.fillStyle='#a8946e';for(let i=0;i<5;i++){ell(g,x-34+i*17,cy+r-9-hash(i)*3,5,3.4);g.fill();}
+  g.lineCap='round';g.lineWidth=4;for(let i=0;i<3;i++){const bx=x-30+i*9,sw=Math.sin(t*1.1+i)*5;g.strokeStyle=i%2?'#4d7359':'#3d6b4c';g.beginPath();g.moveTo(bx,cy+r-8);g.quadraticCurveTo(bx-sw,cy+r-30,bx+sw,cy+r-48-i*7);g.stroke();}
+  [['#f08a2e','#ffc27a',0,1],['#f4f0e6','#f08a2e',2.1,.8]].forEach(([c1,c2,ph,sp],i)=>{
+    const a=t*.42*sp+ph,fx=x+Math.sin(a)*r*.5,fy=cy+12+Math.sin(a*1.7+ph)*r*.26,d=Math.cos(a)>0?1:-1,wag=Math.sin(t*7+ph)*.5;
+    g.save();g.translate(fx,fy);g.scale(d,1);g.fillStyle=c2;g.beginPath();g.moveTo(-9,0);g.lineTo(-21,-8+wag*6);g.lineTo(-18,0);g.lineTo(-21,8+wag*6);g.fill();
+    g.fillStyle=c1;ell(g,0,0,12.5,7.2);g.fill();g.fillStyle=c2;g.beginPath();g.moveTo(-3,-6);g.lineTo(3,-12);g.lineTo(5,-6);g.fill();
+    g.fillStyle='#2a1d18';ell(g,7,-1.5,1.5,1.5);g.fill();g.restore();});
+  for(let i=0;i<3;i++){const k=((t*.22+i*.37)%1),by=cy+r-14-k*(cy+r-14-wl);g.strokeStyle=`rgba(230,245,255,${.6*(1-k)})`;g.lineWidth=1.2;g.beginPath();g.arc(x+18+i*7+Math.sin(t*3+i)*2,by,1.6+k*1.6,0,TAU);g.stroke();}
+  g.restore();
+  g.strokeStyle='rgba(225,240,250,.55)';g.lineWidth=2.5;g.beginPath();g.arc(x,cy,r,0,TAU);g.stroke();
+  g.strokeStyle='rgba(235,245,252,.7)';g.lineWidth=3;ell(g,x,cy-r*.83,r*.56,6);g.stroke();
+  g.strokeStyle='rgba(255,255,255,.35)';g.lineWidth=4;g.beginPath();g.arc(x,cy,r-9,Math.PI*1.08,Math.PI*1.34);g.stroke();
+}
+function drawSeatDog(g,x,t,dog){        // a dog sitting on the floor by the viewer's stool: its head comes up over the counter edge to see what's on the plate
+  const k=ease(clamp(dog.k,0,1));if(k<=0)return;
+  const pant=dog.pant?Math.sin(t*9):0,y=H+96-k*176+pant*1.5,c='#d9a760',d='#b98440',l='#ecd09a';
+  g.save();g.translate(x,y);g.rotate(dog.tilt*.24);
+  g.fillStyle=c;rr(g,-46,22,112,260,48);g.fill();
+  g.fillStyle=d;g.save();g.translate(38,6);g.rotate(.3+dog.ear*.25);ell(g,0,22,15,34);g.fill();g.restore();
+  g.fillStyle=c;ell(g,0,0,46,40);g.fill();
+  g.fillStyle=l;ell(g,-40,14,28,19);g.fill();g.fillStyle='#3a2a22';ell(g,-63,7,8.5,6.5);g.fill();
+  if(dog.pant){g.fillStyle='#3a2a22';ell(g,-42,27,13,5);g.fill();g.fillStyle='#e58f8f';ell(g,-44,34+pant*2,7,11);g.fill();}
+  else{g.strokeStyle='#3a2a22';g.lineWidth=2.4;g.lineCap='round';g.beginPath();g.moveTo(-62,14);g.quadraticCurveTo(-48,26,-30,24);g.stroke();}
+  g.fillStyle=d;g.save();g.translate(-8,-20);g.rotate(-.35-dog.ear*.3);ell(g,0,20,13,30);g.fill();g.restore();
+  const bl=Math.sin(t*1.7)>.97;g.fillStyle='#2a1d18';if(bl){g.fillRect(-25,-9,10,2);}else{ell(g,-20,-8,4.6,5.2);g.fill();g.fillStyle='rgba(255,255,255,.8)';ell(g,-21.5,-10,1.5,1.5);g.fill();}
+  g.strokeStyle=d;g.lineWidth=3;g.lineCap='round';g.beginPath();g.moveTo(-28,-17-dog.ear*3);g.lineTo(-14,-19-dog.ear*2);g.stroke();                 // a hopeful eyebrow
+  g.restore();
+}
+function drawCockatiel(g,x,y,t,o){      // on a brass perch on the counter: bobs along to the music, preens, stretches its wings
+  const u=t%44,win=(a,b,k)=>u>a&&u<b?Math.min(1,Math.sin(Math.PI*(u-a)/(b-a))*k):0,preen=win(12,17,3),flap=win(27,29.2,3),crest=Math.max(win(5,9,3),flap,win(34,37,3));
+  const sx=Math.round(Math.sin(u*.14)*1.4)*14,py=y-176,bob=o.dance&&!preen&&!flap?Math.abs(Math.sin(Math.PI*t*o.bpm/60))*6:Math.sin(t*1.3)*1;
+  g.fillStyle='rgba(0,0,0,.25)';ell(g,x,y+2,40,6);g.fill();g.fillStyle='#b08a3c';ell(g,x,y-3,36,7);g.fill();g.fillRect(x-3,py,6,176);g.fillStyle='#c9a24e';rr(g,x-54,py-4,108,8,4);g.fill();
+  g.fillStyle='#8a6a2c';rr(g,x+38,py-18,16,14,3);g.fill();
+  const bx=x-14+sx,by=py-4+bob*.35;g.lineCap='round';
+  g.fillStyle='#9a9ea6';g.beginPath();g.moveTo(bx-9,by-12);g.lineTo(bx-17,by+44);g.lineTo(bx-8,by+44);g.lineTo(bx+3,by-8);g.fill();                 // tail
+  g.strokeStyle='#8a6a5a';g.lineWidth=2.4;ln(g,bx-3,by-4,bx-3,by+1);ln(g,bx+4,by-4,bx+4,by+1);
+  g.fillStyle='#b9bcc2';g.save();g.translate(bx,by-26);g.rotate(-.12);ell(g,0,0,15,25);g.fill();g.restore();
+  if(flap>0){const w=Math.sin(t*22);g.fillStyle='#a3a7ae';for(const s of[-1,1]){g.save();g.translate(bx+s*8,by-34);g.rotate(s*(.9+w*.5));ell(g,0,-20,9,24);g.fill();g.fillStyle='#f3f1ea';ell(g,0,-22,4,13);g.fill();g.fillStyle='#a3a7ae';g.restore();}}
+  else{g.fillStyle='#a3a7ae';g.save();g.translate(bx-5,by-22);g.rotate(-.2);ell(g,0,0,9,20);g.fill();g.fillStyle='#f3f1ea';ell(g,3,-3,3.2,13);g.fill();g.restore();}
+  const hx=bx+5-preen*13,hy=by-56+bob+preen*17;
+  g.strokeStyle='#f0d86a';g.lineWidth=3;for(let i=0;i<3;i++){const a=-2.3+i*.22-crest*.75;g.beginPath();g.moveTo(hx-2,hy-8);g.lineTo(hx-2+Math.cos(a)*(20+i*3),hy-8+Math.sin(a)*(20+i*3));g.stroke();}     // crest
+  g.fillStyle='#f0d86a';ell(g,hx,hy,11.5,11.5);g.fill();g.fillStyle='#ef8a3a';ell(g,hx+1-preen*2,hy+3,4.4,4.4);g.fill();
+  g.fillStyle='#2a1d18';ell(g,hx+5-preen*9,hy-3,1.7,1.7);g.fill();
+  g.fillStyle='#9a9088';g.beginPath();const bd=preen>0?-1:1;g.moveTo(hx+bd*10,hy-2);g.quadraticCurveTo(hx+bd*17,hy+1,hx+bd*11,hy+7);g.lineTo(hx+bd*8,hy+3);g.fill();
+}
+function drawMoths(g,lamps,t){          // drawn to the lamps, as moths are
+  g.fillStyle='rgba(255,238,205,.8)';
+  lamps.forEach(([lx,ly],i)=>{for(let j=0;j<2;j++){const a=t*(1.1+j*.37+i*.13)+i*2+j*3,r=34+18*Math.sin(t*.7+i+j*2),mx=lx+Math.cos(a)*r,my=ly+26+Math.sin(a*1.9)*14+Math.sin(t*5+j)*3,f=Math.abs(Math.sin(t*30+j*2+i));
+    ell(g,mx-2.2,my,2.6,1+f*2.2);g.fill();ell(g,mx+2.2,my,2.6,1+f*2.2);g.fill();}});
+}
+function drawMouse(g,x,y,dir,sit,t){    // after crumbs on the far end of the counter
+  const c='#a79c94',s=1.7;g.save();g.translate(x,y);g.scale(dir*s,s);g.lineCap='round';
+  g.strokeStyle='#c9a9a0';g.lineWidth=1.8;g.beginPath();g.moveTo(-12,-3);g.quadraticCurveTo(-24,-2+Math.sin(t*6)*2,-30,-9);g.stroke();
+  g.fillStyle=c;
+  if(sit){ell(g,-2,-10,9,11);g.fill();ell(g,5,-22,6.5,6);g.fill();g.fillStyle='#d9b0a8';ell(g,2,-28,3.4,3.6);g.fill();g.fillStyle='#e6cf8a';ell(g,10,-18+Math.sin(t*16)*.8,2.6,2.2);g.fill();
+    g.strokeStyle=c;g.lineWidth=2.2;ln(g,3,-15,9,-17);g.fillStyle='#2a1d18';ell(g,7.5,-23,1.1,1.1);g.fill();g.fillStyle='#d98a8a';ell(g,11.5,-21,1.2,1.1);g.fill();}
+  else{const bob=Math.abs(Math.sin(t*22))*1.5;ell(g,0,-7-bob,13,7.5);g.fill();ell(g,12,-8-bob,6.5,5.5);g.fill();g.fillStyle='#d9b0a8';ell(g,9,-14-bob,3.4,3.6);g.fill();
+    g.fillStyle='#2a1d18';ell(g,14.5,-9-bob,1.1,1.1);g.fill();g.fillStyle='#d98a8a';ell(g,18.5,-7-bob,1.2,1.1);g.fill();}
+  g.restore();
 }
 /* shared movement: step back from the counter into a personal lane, walk, step back in.
    Speed eases up from a standstill and settles into the last few steps. */
@@ -1537,44 +1654,16 @@ SCENES.ramen=function(){
   /* ── birds sheltering on the wire across the street: they hop along, shake the rain off, look about, and now and then
         one flies off and comes back ── */
   const wireY=x=>{const k=(x-WIN.x)/WIN.w;return WIN.y+52+k*8+Math.sin(Math.PI*k)*20;};
-  const BIRDS=[250,290,402].map((x,i)=>({x,x0:x,x1:x,dir:i%2?1:-1,st:'sit',t:R(2,9),k:0,fx:0,fy:0,col:['rgba(150,166,198,.95)','rgba(178,168,160,.95)','rgba(140,156,186,.95)'][i]}));
-  function stepBirds(dt){
-    for(const b of BIRDS){b.t-=dt;
-      if(b.st==='sit'){if(b.t<0){const r=R(),free=x=>x>WIN.x+30&&x<WIN.x+WIN.w-30&&BIRDS.every(o=>o===b||Math.abs((o.st==='hop'?o.x1:o.x)-x)>24);
-          if(r<.4){const nx=b.x+pick([-1,1])*R(14,40);if(free(nx)){b.st='hop';b.x0=b.x;b.x1=nx;b.dir=nx>b.x?1:-1;b.k=0;if(R()<.25)SFX.chirp(panX(b.x)-.2);}else b.t=R(1,3);}
-          else if(r<.65){b.st='fluff';b.t=R(.7,1.1);if(R()<.3)SFX.chirp(panX(b.x)-.2);}
-          else if(r<.87){b.dir=-b.dir;b.t=R(2,7);}
-          else if(BIRDS.every(o=>o.st==='sit'||o.st==='hop'||o.st==='fluff')){b.st='leave';b.k=0;b.x0=b.x;b.dir=b.x>WIN.x+WIN.w/2?1:-1;}
-          else b.t=R(2,5);}}
-      else if(b.st==='hop'){b.k+=dt/.28;b.x=lerp(b.x0,b.x1,Math.min(1,b.k));if(b.k>=1){b.st='sit';b.t=R(2,8);}}
-      else if(b.st==='fluff'){if(b.t<0){b.st='sit';b.t=R(3,9);}}
-      else if(b.st==='leave'){b.k+=dt/1.5;if(b.k>=1){b.st='gone';b.t=R(9,26);}}
-      else if(b.st==='gone'){if(b.t<0){let nx=0,n=0;do{nx=WIN.x+R(40,WIN.w-40);}while(n++<20&&BIRDS.some(o=>o!==b&&Math.abs(o.x-nx)<26));b.x0=nx;b.x=nx;b.dir=nx>WIN.x+WIN.w/2?-1:1;b.st='come';b.k=0;}}
-      else{b.k+=dt/1.5;if(b.k>=1){b.st='sit';b.t=R(2,7);}}}
-  }
-  function drawBirds(g,t){
-    g.strokeStyle='rgba(12,14,24,.9)';g.lineWidth=1.6;g.beginPath();for(let x=WIN.x;x<=WIN.x+WIN.w;x+=30)x===WIN.x?g.moveTo(x,wireY(x)):g.lineTo(x,wireY(x));g.stroke();
-    for(const b of BIRDS){if(b.st==='gone')continue;
-      let x=b.x,y=wireY(b.x)-1,fly=0,sc=1,wob=0;
-      if(b.st==='hop')y-=Math.sin(Math.PI*Math.min(1,b.k))*7;
-      else if(b.st==='fluff'){sc=1.22;wob=Math.sin(t*46)*1.3;}
-      else if(b.st==='leave'||b.st==='come'){const k=ease(b.st==='leave'?b.k:1-b.k),dx=b.st==='leave'?b.dir:-b.dir;x=b.x0+dx*k*(WIN.w*.7);y=wireY(b.x0)-1-k*150-Math.sin(Math.PI*k)*20;fly=1;}
-      g.save();g.translate(x+wob,y);g.scale(b.dir*(fly&&b.st==='come'?-1:1),1);g.fillStyle=b.col;g.strokeStyle=b.col;g.lineCap='round';
-      if(!fly){g.lineWidth=1.3;ln(g,-2,-2,-2,1);ln(g,2,-2,2,1);}
-      g.lineWidth=3;ln(g,-6*sc,-6,-14,-2+(fly?-3:0));                                            // tail
-      ell(g,0,-8,8.5*sc,6.6*sc);g.fill();ell(g,6.5,-14-(sc-1)*4,4.6,4.4);g.fill();              // body and head
-      g.beginPath();g.moveTo(10.5,-15);g.lineTo(14.5,-13.6);g.lineTo(10.5,-12.6);g.fill();     // beak
-      if(fly){const w=Math.sin(t*26);g.lineWidth=3.4;g.beginPath();g.moveTo(-1,-10);g.quadraticCurveTo(-5,-16-w*10,-11,-12-w*14);g.stroke();}
-      g.restore();}
-  }
+  const BIRDS=mkBirds(WIN,wireY,['rgba(150,166,198,.95)','rgba(178,168,160,.95)','rgba(140,156,186,.95)']);
   function drawWindow(g){
     const{x:X,y:Y,w,h}=WIN;g.save();g.beginPath();g.rect(X,Y,w,h);g.clip();
-    drawBirds(g,WARM.age);
+    BIRDS.draw(g,T_);
     if(car.p>=0){const cx=X-120+car.p*(w+240);g.globalCompositeOperation='lighter';g.fillStyle=rg(g,cx,Y+h*.8,0,130,0,'rgba(255,225,170,.26)',1,'rgba(255,225,170,0)');g.fillRect(cx-130,Y+h*.8-130,260,260);g.globalCompositeOperation='source-over';}
     for(const q of walkers){if(q.wait>0)continue;const by=Y+h+6,bob=Math.sin(q.ph)*2;g.fillStyle='rgba(7,10,20,.88)';
       rr(g,q.x-17,by-118+bob,34,120,14);g.fill();ell(g,q.x,by-134+bob,13,14);g.fill();
       g.beginPath();g.arc(q.x+q.dir*6,by-150+bob,52,Math.PI,0);g.fill();g.fillRect(q.x+q.dir*6-1.5,by-150+bob,3,40);}
     if(WARM.reg)drawRegular(g,WARM.reg,Y+h+6,1,'rgba(7,10,20,.9)',WARM.age,true);
+    drawSillCat(g,X+84,Y+h+2,T_,'rgba(104,112,140,.97)');
     {const rk=rainK(),n=Math.ceil(streaks.length*rk);g.strokeStyle=`rgba(175,205,245,${.14+.13*rk})`;g.lineWidth=1.6;g.beginPath();for(let i=0;i<n;i++){const s=streaks[i];g.moveTo(s.x,s.y);g.lineTo(s.x-s.l*.13,s.y+s.l);}g.stroke();}
     for(const d of drops){
       if(d.vy>0){g.strokeStyle='rgba(190,215,245,.14)';g.lineWidth=d.r;g.beginPath();g.moveTo(d.x,Math.max(d.y0,d.y-70));g.lineTo(d.x,d.y);g.stroke();}
@@ -2032,6 +2121,7 @@ SCENES.ramen=function(){
     heat:()=>[{x:POT1.cx,y:POT1.top-6,w:150,k:1,smoke:.45,glow:0},{x:POT2.cx,y:POT2.top-6,w:110,k:.8,smoke:.35,glow:0},{x:1260,y:556,w:120,k:.8,smoke:.45,glow:0},
       ...cooks.filter(c=>c.flame>0).map(c=>{const q=toolTip(c,64);return{x:q[0],y:q[1]+18,w:30,k:1,fry:1.3,smoke:1.6,glow:.8};})]};
   host.s=host.A.h;host.script=hostLife(host,ENV);cooks.push(host);
+  let T_=0;ENV.tick=(dt,t)=>{T_=t;BIRDS.step(dt);};ENV.front=(g,t)=>drawFishBowl(g,1640,FY,t);
   const WARM=mkWarm(ENV),rainK=()=>.66+.34*Math.sin(WARM.age*TAU/1400+1.25);       // the rain eases off and comes back over about twenty-five minutes
 
   /* ── front of house: a server collects bowls from the dining side of the pass; guests move about ── */
@@ -2092,7 +2182,6 @@ SCENES.ramen=function(){
       else{q.sit=Math.min(1,q.sit+dt*1.3);if(q.sit>=1){q.st='sit';q.t=R(28,80);q.eat=R(2,5);}}
     }
     for(const k of TICK)k.a=clamp(k.a+(k.on?dt*2:-dt*3),0,1);
-    stepBirds(dt);
     if((bgSfx.ticket-=dt*(WARM.rush?5:1))<0){bgSfx.ticket=R(16,40);const off=TICK.filter(k=>!k.on);if(off.length){const k=pick(off);k.on=true;k.h=RI(48,66);SFX.rustle(panX(k.x));}}
     /* steam everywhere */
     emit(0,7,dt,()=>puff(POT1.cx,POT1.top-6,{spread:58}));
@@ -2307,6 +2396,7 @@ SCENES.diner=function(){
       g.fillStyle='rgba(215,235,242,.9)';if(c.van)rr(g,c.x+d*30-22,by-70,44,24,6);else rr(g,c.x-34-d*8,by-68,72,22,8);g.fill();
       g.fillStyle='#fff3c8';ell(g,c.x+d*76,by-32,4,5);g.fill();
       for(const wx of[-48,48]){g.fillStyle='#3b3a40';ell(g,c.x+wx,by-10,14,14);g.fill();g.fillStyle='#c9d1d6';ell(g,c.x+wx,by-10,5.5,5.5);g.fill();}}
+    BIRDS.draw(g,t);
     if(WARM.reg)drawRegular(g,WARM.reg,Y+h+34,1.55,'#4f6482',WARM.age,false);
     g.restore();g.fillStyle='#c9d1d6';for(let i=1;i<4;i++)g.fillRect(X+i*w/4-4,Y,8,h);
   }
@@ -2665,6 +2755,14 @@ SCENES.diner=function(){
       BAC.some(b=>b)&&{x:BX,y:590,w:50,k:1,fry:1.6,smoke:.9,glow:.6},...CK.map((k,i)=>k&&{x:CS[i][0],y:CS[i][1]-4,w:34,k:.5,fry:.3,smoke:.4,glow:.4}),OM&&{x:OMS[0],y:OMS[1]-4,w:50,k:.6,fry:.6,smoke:.5,glow:.5}].filter(Boolean)};
   host.s=host.A.h;host.script=hostLife(host,ENV);cooks.push(host);
   const WARM=mkWarm(ENV);
+  const BIRDS=mkBirds(WIN,x=>{const k=(x-WIN.x)/WIN.w;return WIN.y+74+Math.sin(Math.PI*k)*16;},['#6b4f3f','#8a6a52','#5f5048','#9a7a5e'],{wire:'rgba(70,70,84,.75)'});
+  /* the dog by your stool: up for a look whenever something lands on your plate, and now and then just to see you */
+  const DOG={k:0,st:'down',t:R(14,26),tilt:0,pant:false,ear:0,sub:0};
+  ENV.tick=(dt)=>{BIRDS.step(dt);const D=DOG,busy=YOU.busy||YOU.bh>0;D.t-=dt;
+    if(D.st==='down'){D.k=Math.max(0,D.k-dt/.7);if(D.t<0||(busy&&D.k<=0&&D.t<40)){D.st='up';D.t=R(9,17);D.sub=0;}}
+    else{D.k=Math.min(1,D.k+dt/.6);if((D.sub-=dt)<0){D.sub=R(1.2,3);D.tilt=pick([0,0,1,-1,.6]);D.pant=R()<.45;}
+      D.ear+=((busy?1:0)-D.ear)*Math.min(1,dt*6);if(busy)D.t=Math.max(D.t,2.5);if(D.t<0){D.st='down';D.t=R(35,80);D.tilt=0;D.pant=false;}}};
+  ENV.dog=DOG;ENV.front=(g,t)=>drawSeatDog(g,1236,t,DOG);
 
   /* ── front of house: the server collects plates, pours coffee and tops up the syrup; guests come and go ── */
   const SEATS=[[1612,528],[1668,534],[1722,528],[1778,534],[1832,528]].map(([x,y])=>({sx:x,y,x,sit:1,st:'sit',t:R(12,70),eat:R(1,6),dip:0,dir:1,ph:R(TAU)}));
@@ -3199,6 +3297,7 @@ SCENES.bistro=function(){
     heat:()=>[PAN1,PAN2].map(q=>({x:q.x,y:q.y-12,w:74,k:(q.meat&&q.meat.length)||q.veg?1:.3,fry:1,smoke:.8,glow:.7}))};
   host.s=host.A.h;host.script=hostLife(host,ENV);cooks.push(host);
   const WARM=mkWarm(ENV);
+  ENV.front=(g,t)=>drawCockatiel(g,1650,FY,t,{dance:radioOn&&Music.on,bpm:Music.sec?Music.sec.bpm:80});
 
   /* ── front of house ── */
   const SEATS=[[1612,524],[1680,530],[1800,518],[1856,526],[1916,520]].map(([x,y])=>({sx:x,y,x,sit:1,st:'sit',t:R(12,70),eat:R(1,6),dip:0,dir:1,ph:R(TAU)}));
@@ -3269,7 +3368,7 @@ SCENES.bistro=function(){
     for(const[x,y0]of[[1646,570],[1840,564],[1740,548]]){const fl=1+.25*Math.sin(t*9+x)+.15*Math.sin(t*23+x),ch=14-9*((WARM.age/2700+hash(x))%1),y=y0+14-ch;g.fillStyle='rgba(240,230,210,.8)';g.fillRect(x-2,y,4,ch);g.fillStyle='#ffd27a';ell(g,x,y-5,3*fl,6*fl);g.fill();
       g.globalCompositeOperation='lighter';g.globalAlpha=.16*fl;g.drawImage(glowC,x-70,y-75,140,140);g.globalAlpha=1;g.globalCompositeOperation='source-over';}       // candles
     drawCook(g,server,t);g.restore();
-    g.fillStyle=BRASS;g.fillRect(350,300,56,6);drawRadio(g,378,300,t,{body:'#3a2a22'});drawVase(g,1905,CT,t,['#b5543c','#efe6d2','#c9a25a']);
+    g.fillStyle=BRASS;g.fillRect(350,300,56,6);drawRadio(g,378,300,t,{body:'#3a2a22'});drawMoths(g,LAMPS.slice(0,3),t);drawVase(g,1905,CT,t,['#b5543c','#efe6d2','#c9a25a']);
     drawClock(g,1632,128,200,{body:'#2a2118',face:'#0d0c0a',on:'#ffe6b0',off:'rgba(255,230,176,.06)',glow:9});
     drawHang(g,t);drawRange(g,t);drawProps(g,t);
     const order=cooks.slice().sort((a,b)=>a.y-b.y);
@@ -3387,6 +3486,7 @@ SCENES.bakery=function(){
   function drawWindow(g,t){
     const{x:X,y:Y,w,h}=WIN;g.save();g.beginPath();g.rect(X,Y,w,h);g.clip();
     {const k=clamp(WARM.age/3000,0,1);if(k>0){g.fillStyle=lg(g,0,Y,0,Y+h,0,`rgba(96,110,170,${.3*k})`,.55,`rgba(240,150,120,${.42*k})`,1,`rgba(255,196,128,${.6*k})`);g.fillRect(X,Y,w,h);}}       // dawn comes up behind the snow over the first fifty minutes
+    BIRDS.draw(g,t);
     if(WARM.reg)drawRegular(g,WARM.reg,Y+h+6,1,'#75606c',WARM.age,false);
     g.fillStyle='rgba(240,246,255,.9)';
     for(const f of flakes){ell(g,f.x+Math.sin(t*.8+f.ph)*10,f.y,f.r,f.r);g.fill();}
@@ -3707,6 +3807,15 @@ SCENES.bakery=function(){
       F.tray&&F.tray.glaze<1&&{x:F.cx,y:CT-22,w:90,k:.6,smoke:.7,glow:0}].filter(Boolean)};
   host.s=host.A.h;host.script=hostLife(host,ENV);cooks.push(host);
   const WARM=mkWarm(ENV);
+  const BIRDS=mkBirds(WIN,x=>{const k=(x-WIN.x)/WIN.w;return WIN.y+96-k*22+Math.sin(Math.PI*k)*10;},['#7a6a62','#8b7b70','#6f6862'],{wire:'#4a3a30',thick:7,snow:true,breast:'#c9553f'});
+  /* a mouse comes along the far end of the counter for crumbs; it only peeks if the cat is over here */
+  const MOUSE={st:'hide',t:R(20,40),x:1975,tx:0,dir:-1};
+  ENV.tick=(dt)=>{BIRDS.step(dt);const M=MOUSE,cat=WARM.cat&&['up','front','off'].includes(WARM.cat.st);M.t-=dt;
+    if(M.st==='hide'){if(M.t<0){M.st='out';M.tx=cat?1900:R(1700,1800);M.dir=-1;M.peek=cat;}}
+    else if(M.st==='out'){M.x=Math.max(M.tx,M.x-(M.peek?90:300)*dt);if(cat&&!M.peek){M.st='back';M.dir=1;}else if(M.x<=M.tx){M.st='nib';M.t=M.peek?R(1,2):R(3,7);}}
+    else if(M.st==='nib'){if(M.t<0||(cat&&!M.peek)){M.st='back';M.dir=1;}}
+    else{M.x+=420*dt;if(M.x>=1975){M.x=1975;M.st='hide';M.t=R(40,95);}}};
+  ENV.mouse=MOUSE;ENV.front=(g,t)=>{if(MOUSE.st!=='hide')drawMouse(g,MOUSE.x,FY,MOUSE.dir,MOUSE.st==='nib',t);};
 
   /* ── per-frame update ── */
   const bgSfx={tink:R(6,16),dish:R(14,34),lid:R(20,40),wind:2};let aud=null;
